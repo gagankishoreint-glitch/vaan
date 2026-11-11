@@ -142,7 +142,10 @@ class StandIn:
     async def complete(self, body: dict, raw: Request) -> Any:
         now = time.monotonic()
         self.calls += 1
-        max_tokens = int(body.get("max_tokens") or 0)
+        # Accept the current name first and fall back to the deprecated alias, so
+        # the stand-in keeps working whichever one the gateway sends.
+        max_tokens = int(body.get("max_completion_tokens")
+                         or body.get("max_tokens") or 0)
 
         # 429 controls first: they are the behaviour under test
         if self.p429_rate and self._rng.random() < self.p429_rate:

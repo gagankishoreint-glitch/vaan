@@ -137,6 +137,8 @@ class Gateway:
     client: httpx.AsyncClient
     policy: str = "managed"
     retry_budget_ratio: float = 0.1
+    #: Hard cap on HTTP attempts per logical call, for the MANAGED policy.
+    max_attempts: int = 3
     max_tokens_map: dict = field(default_factory=dict)
     _retries_used: int = 0
     _calls: int = 0
@@ -157,107 +159,176 @@ class Gateway:
             breaker=Breaker(b.get("fail_threshold", 5), b.get("open_s", 10.0)),
             client=client, policy=policy,
             retry_budget_ratio=cfg.get("gateway.retry_budget_ratio", 0.1),
+            max_attempts=cfg.get("gateway.max_attempts", 3),
         )
+
+    # ------------------------------------------------------------ payload
+
+    #: The reasoning-effort parameter name accepted by Groq's chat completions.
+    #: UNVERIFIED as of P5: PROBE.md records this as an open question, and the
+    #: probe must report the verbatim 400 if it is rejected. It is never "none".
+    REASONING_EFFORT_PARAMS = ("reasoning_effort",)
+
+    def request_payload(self, *, model: str, messages: list[dict], max_tokens: int,
+                        reasoning_effort: Optional[str] = None) -> dict:
+        """Build the JSON body for one attempt.
+
+        `max_completion_tokens` is what we send. It is the current OpenAI-compatible
+        name for "cap on generated tokens", and Groq's docs list it for the
+        gpt-oss family; `max_tokens` is the deprecated alias. Sending one name
+        consistently is the point: a retry must not change the request shape.
+
+        `reasoning_effort` goes ONLY to gpt-oss models, and never takes the value
+        "none" -- an ignored parameter is a silent behaviour change, and "none"
+        is the value we have no evidence for.
+        """
+        body: dict = {"model": model, "messages": messages,
+                      "max_completion_tokens": max_tokens, "stream": False}
+        if reasoning_effort is not None:
+            if "gpt-oss" not in model:
+                # Not an error: callers pass one config value for all models.
+                # Dropping it keeps the request valid for non-reasoning models.
+                pass
+            elif reasoning_effort == "none":
+                raise ValueError(
+                    'reasoning_effort must never be "none": we have no evidence '
+                    "for what the service does with it (PROBE.md open question)")
+            else:
+                body[self.REASONING_EFFORT_PARAMS[0]] = reasoning_effort
+        return body
+
+    # ------------------------------------------------------------ the loop
 
     async def call(self, *, scope: RequestScope, step: str, model: str,
                    messages: list[dict], max_tokens: int,
-                   deadline_s: float, stream: bool = False) -> dict:
-        """One logical model call, with retries. Returns the parsed 200 body."""
+                   deadline_s: float, stream: bool = False,
+                   reasoning_effort: Optional[str] = None) -> dict:
+        """One logical model call. Returns the parsed 200 body.
+
+        A BOUNDED LOOP, never recursion (BUG-013). Each iteration is one HTTP
+        attempt; the loop counter is the only thing that can stop it, so the
+        worst case is `max_attempts` requests and no possibility of exhausting
+        the stack. Policies differ in *what they decide* between attempts, never
+        in whether they recurse.
+        """
         self._calls += 1
         self._retry_credit += self.retry_budget_ratio
-        self._attempt_n += 1
-        attempt_id = f"{scope.req_id}-{step}-{self._attempt_n}"
         t_start = self.clock.now()
+        managed = self.policy != "naive"
 
-        if self.breaker.state(t_start) == "open":
-            raise BreakerOpen(f"breaker open, reopens in "
-                              f"{self.breaker.opened_at + self.breaker.open_s - t_start:.1f}s")
-        self.budget.take(max_tokens, t_start)
+        max_attempts = (self.max_attempts if managed
+                        else self.cfg.get("gateway.naive_max_attempts", 5))
+        last_error = "no attempt made"
 
-        attempt = Attempt(attempt_id, scope.req_id, step, "standin" if "8009" in self.base_url
-                          else "groq", model, t_sent=t_start)
-        scope.attempt_start(attempt)
-        try:
-            resp = await asyncio.wait_for(
-                self.client.post("/chat/completions", json={
-                    "model": model, "messages": messages,
-                    "max_tokens": max_tokens, "stream": False}),
-                timeout=max(1.0, deadline_s - (self.clock.now() - t_start)))
-        except asyncio.TimeoutError:
-            attempt.outcome = Outcome.TIMEOUT
+        for attempt_no in range(1, max_attempts + 1):
+            self._attempt_n += 1
+            attempt_id = f"{scope.req_id}-{step}-{self._attempt_n}"
+            t_attempt = self.clock.now()
+
+            if managed:
+                if self.breaker.state(t_attempt) == "open":
+                    raise BreakerOpen(
+                        f"breaker open, reopens in "
+                        f"{self.breaker.opened_at + self.breaker.open_s - t_attempt:.1f}s")
+                self.budget.take(max_tokens, t_attempt)
+
+            attempt = Attempt(
+                attempt_id, scope.req_id, step,
+                "standin" if "8009" in self.base_url else "groq",
+                model, t_sent=t_attempt)
+            scope.attempt_start(attempt)
+            payload = self.request_payload(
+                model=model, messages=messages, max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort)
+            try:
+                resp = await asyncio.wait_for(
+                    self.client.post("/chat/completions", json=payload),
+                    timeout=max(1.0, deadline_s - (self.clock.now() - t_start)))
+            except asyncio.TimeoutError:
+                attempt.outcome = Outcome.TIMEOUT
+                attempt.t_end = self.clock.now()
+                scope.attempt_end(attempt)
+                if managed:
+                    self.breaker.record(False, attempt.t_end)
+                raise DeadlineExceeded("attempt timed out") from None
+
+            attempt.t_first_byte = self.clock.now()
             attempt.t_end = self.clock.now()
+            attempt.status = resp.status_code
+            attempt.rl_headers_raw = dict(resp.headers)
+            rl = parse_rl_headers(resp.headers)
+            attempt.retry_after_s = rl["retry_after_s"]
+            body = resp.json()
+            usage = body.get("usage") or {}
+            attempt.tokens_in = usage.get("prompt_tokens")
+            attempt.tokens_out = usage.get("completion_tokens")
+            self.budget.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
+            self.budget.reconcile(rl.get("remaining_tpm"), rl.get("remaining_rpd"),
+                                  self.clock.now())
+
+            if resp.status_code == 200:
+                attempt.outcome = Outcome.OK
+                attempt.t_first_token = attempt.t_first_byte
+                scope.attempt_end(attempt)
+                if managed:
+                    self.breaker.record(True, attempt.t_end)
+                return body
+
+            if resp.status_code == 429:
+                attempt.outcome = (Outcome.RATE_LIMITED_DAY
+                                   if (attempt.retry_after_s or 0) >= 60
+                                   else Outcome.RATE_LIMITED_MIN)
+            elif resp.status_code == 413:
+                attempt.outcome = Outcome.TOO_LARGE
+            else:
+                attempt.outcome = Outcome.SERVER_ERROR
+            attempt.error_body = resp.text[:2000]
             scope.attempt_end(attempt)
-            self.breaker.record(False, attempt.t_end)
-            raise DeadlineExceeded("attempt timed out") from None
-        finally:
-            pass
+            if managed:
+                self.breaker.record(False, attempt.t_end)
 
-        attempt.t_first_byte = self.clock.now()
-        attempt.t_end = self.clock.now()
-        attempt.status = resp.status_code
-        attempt.rl_headers_raw = dict(resp.headers)
-        rl = parse_rl_headers(resp.headers)
-        attempt.retry_after_s = rl["retry_after_s"]
-        body = resp.json()
-        usage = body.get("usage") or {}
-        attempt.tokens_in = usage.get("prompt_tokens")
-        attempt.tokens_out = usage.get("completion_tokens")
-        self.budget.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
-        self.budget.reconcile(rl.get("remaining_tpm"), rl.get("remaining_rpd"),
-                              self.clock.now())
+            last_error = (f"{attempt.outcome.value} status={resp.status_code} "
+                          f"retry_after={attempt.retry_after_s}")
+            decision = self._next_delay(attempt, t_start, deadline_s,
+                                        attempt_no, max_attempts, managed)
+            if decision is None:
+                raise DeadlineExceeded(last_error)
+            wait, why = decision
+            scope.emit("retry.sleep", attempt_id=attempt.attempt_id,
+                       sleep_s=round(wait, 3), policy=self.policy, why=why)
+            if wait:
+                await self.clock.sleep(wait)   # slot released while sleeping
 
-        if resp.status_code == 200:
-            attempt.outcome = Outcome.OK
-            attempt.t_first_token = attempt.t_first_byte
-            scope.attempt_end(attempt)
-            self.breaker.record(True, attempt.t_end)
-            return body
+        raise DeadlineExceeded(f"{last_error} (gave up after {max_attempts} attempts)")
 
-        if resp.status_code == 429:
-            attempt.outcome = (Outcome.RATE_LIMITED_DAY
-                               if (attempt.retry_after_s or 0) >= 60
-                               else Outcome.RATE_LIMITED_MIN)
-        elif resp.status_code == 413:
-            attempt.outcome = Outcome.TOO_LARGE
-        else:
-            attempt.outcome = Outcome.SERVER_ERROR
-        attempt.error_body = resp.text[:2000]
-        scope.attempt_end(attempt)
-        self.breaker.record(False, attempt.t_end)
+    def _next_delay(self, attempt, t_start: float, deadline_s: float,
+                    attempt_no: int, max_attempts: int,
+                    managed: bool) -> Optional[tuple[float, str]]:
+        """Decide whether to retry. Returns (seconds_to_wait, why) or None.
 
-        return await self._maybe_retry(scope, attempt, step, model, messages,
-                                       max_tokens, deadline_s, t_start)
-
-    async def _maybe_retry(self, scope, attempt, step, model, messages,
-                           max_tokens, deadline_s, t_start) -> dict:
-        if attempt.outcome is Outcome.RATE_LIMITED_DAY:
-            raise DeadlineExceeded("day limit: never retry")
+        This is the ONLY place the two policies differ. Keeping the decision in a
+        pure method is what makes the comparison honest: same loop, same attempt
+        cap, one different function.
+        """
+        if attempt_no >= max_attempts:
+            return None
         elapsed = self.clock.now() - t_start
+
+        if not managed:
+            # NAIVE: fixed backoff, ignores retry-after entirely. The provider asked
+            # for quiet; this policy sends anyway. That is the harm being shown.
+            return (self.cfg.get("gateway.naive_backoff_s", 0.2), "naive_fixed_backoff")
+
+        if attempt.outcome is Outcome.RATE_LIMITED_DAY:
+            return None                              # a day limit never retries
         if elapsed >= deadline_s:
-            raise DeadlineExceeded("deadline exhausted before retry")
-
-        if self.policy == "naive":
-            # Demonstrates the harm: ignore retry-after, no budget, no deadline check.
-            await self.clock.sleep(0.01)
-            return await self.call(scope=scope, step=step, model=model,
-                                   messages=messages, max_tokens=max_tokens,
-                                   deadline_s=deadline_s)
-
-        # managed. A ratio of 0.1 over 10 calls earns 1 retry; the floor below lets
-        # the FIRST failures retry at all, which is what a user-facing service does
-        # (a cold gateway must not refuse to retry anything). It is a config value.
+            return None
         floor = self.cfg.get("gateway.retry_credit_floor", 0.0)
         if self._retry_credit + floor < 1.0:
-            raise DeadlineExceeded(
-                f"retry budget exhausted ({self._retries_used} retries over "
-                f"{self._calls} calls at ratio {self.retry_budget_ratio})")
+            return None                              # global retry budget spent
         wait = attempt.retry_after_s if attempt.retry_after_s is not None else 1.0
         if elapsed + wait >= deadline_s:
-            raise DeadlineExceeded("retry-after would exceed the deadline")
+            return None                              # would sleep past the deadline
         self._retries_used += 1
         self._retry_credit -= 1.0
-        scope.emit("retry.sleep", attempt_id=attempt.attempt_id, sleep_s=round(wait, 3))
-        await self.clock.sleep(wait)     # slot released: we are not holding a worker
-        return await self.call(scope=scope, step=step, model=model,
-                               messages=messages, max_tokens=max_tokens,
-                               deadline_s=deadline_s)
+        return (wait, "honour_retry_after")

@@ -97,3 +97,149 @@ def test_hyphenated_line_break_still_matches():
 
 def test_ligature_normalises():
     assert normalize("\ufb01ne") == "fine"
+
+
+# ---------------------------------------------------------------- retry loop
+
+def _gateway(policy, cfg=None, handler=None):
+    import asyncio, httpx
+    from relay.clock import RealClock
+    from relay.config import load_config
+    from relay.gateway.gateway import Gateway
+    cfg = cfg or load_config()
+    calls = {"n": 0}
+
+    def _h(request):
+        calls["n"] += 1
+        return handler(request)
+
+    async def build():
+        c = httpx.AsyncClient(transport=httpx.MockTransport(_h),
+                              base_url="http://x/openai/v1")
+        gw = Gateway.from_config(cfg, RealClock(), None, base_url="http://x/openai/v1",
+                                 api_key="k", client=c, policy=policy)
+        return c, gw
+    return build, calls
+
+
+class _S:
+    req_id = "b"
+
+    def attempt_start(self, a):
+        pass
+
+    def attempt_end(self, a):
+        pass
+
+    def emit(self, *a, **k):
+        pass
+
+
+def _always_429(retry_after=5):
+    import httpx
+    return httpx.Response(429, headers={"retry-after": str(retry_after)},
+                          json={"error": {"message": "rate limited"}})
+
+
+def test_naive_is_bounded_and_never_recurses():
+    """BUG-013: naive called itself recursively and died with RecursionError
+    after 489 requests. It must stop at naive_max_attempts."""
+    import asyncio
+    from relay.config import load_config
+    cfg = load_config()
+    build, calls = _gateway("naive", cfg, lambda r: _always_429())
+
+    async def go():
+        c, gw = await build()
+        with pytest.raises(Exception):
+            await gw.call(scope=_S(), step="d", model="m",
+                          messages=[{"role": "user", "content": "hi"}],
+                          max_tokens=10, deadline_s=3.0)
+        await c.aclose()
+
+    asyncio.run(go())
+    assert calls["n"] == cfg.get("gateway.naive_max_attempts"), calls["n"]
+
+
+def test_naive_ignores_retry_after_and_deadline():
+    """Naive still retries when retry-after would blow the deadline. That is
+    the harm being demonstrated, so a test must pin it rather than fix it."""
+    import asyncio
+    build, calls = _gateway("naive", None, lambda r: _always_429(retry_after=60))
+
+    async def go():
+        c, gw = await build()
+        with pytest.raises(Exception):
+            await gw.call(scope=_S(), step="d", model="m",
+                          messages=[{"role": "user", "content": "hi"}],
+                          max_tokens=10, deadline_s=1.0)
+        await c.aclose()
+
+    asyncio.run(go())
+    assert calls["n"] > 1     # managed would stop at 1
+
+
+def test_managed_stops_after_one_attempt_when_retry_after_exceeds_deadline():
+    import asyncio
+    build, calls = _gateway("managed", None, lambda r: _always_429(retry_after=5))
+
+    async def go():
+        c, gw = await build()
+        with pytest.raises(Exception):
+            await gw.call(scope=_S(), step="d", model="m",
+                          messages=[{"role": "user", "content": "hi"}],
+                          max_tokens=10, deadline_s=3.0)
+        await c.aclose()
+
+    asyncio.run(go())
+    assert calls["n"] == 1, calls["n"]
+
+
+def test_never_retry_a_day_limit():
+    import asyncio
+    build, calls = _gateway("managed", None, lambda r: _always_429(retry_after=3600))
+
+    async def go():
+        c, gw = await build()
+        with pytest.raises(Exception):
+            await gw.call(scope=_S(), step="d", model="m",
+                          messages=[{"role": "user", "content": "hi"}],
+                          max_tokens=10, deadline_s=30.0)
+        await c.aclose()
+
+    asyncio.run(go())
+    assert calls["n"] == 1
+
+
+# ---------------------------------------------------------------- payload
+
+def test_payload_uses_max_completion_tokens_not_max_tokens():
+    from relay.gateway.gateway import Gateway
+    from relay.config import load_config
+    gw = Gateway.from_config(load_config(), None, None, base_url="http://x",
+                             api_key="k", client=None)
+    b = gw.request_payload(model="openai/gpt-oss-20b", messages=[], max_tokens=400)
+    assert "max_completion_tokens" in b
+    assert "max_tokens" not in b
+
+
+def test_reasoning_effort_sent_to_gpt_oss_only():
+    from relay.gateway.gateway import Gateway
+    from relay.config import load_config
+    gw = Gateway.from_config(load_config(), None, None, base_url="http://x",
+                             api_key="k", client=None)
+    assert gw.request_payload(model="openai/gpt-oss-20b", messages=[],
+                              max_tokens=10, reasoning_effort="low")["reasoning_effort"] == "low"
+    # a non-reasoning model must not receive the parameter at all
+    assert "reasoning_effort" not in gw.request_payload(
+        model="llama-3.3-70b", messages=[], max_tokens=10, reasoning_effort="low")
+
+
+def test_reasoning_effort_none_is_refused():
+    from relay.gateway.gateway import Gateway
+    from relay.config import load_config
+    gw = Gateway.from_config(load_config(), None, None, base_url="http://x",
+                             api_key="k", client=None)
+    with pytest.raises(ValueError, match="never be"):
+        gw.request_payload(model="openai/gpt-oss-20b", messages=[],
+                           max_tokens=10, reasoning_effort="none")

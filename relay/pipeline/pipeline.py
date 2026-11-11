@@ -90,7 +90,8 @@ class Pipeline:
                 messages=[{"role": "user", "content": DRAFT_PROMPT.format(
                     passages=format_passages(hits), question=question)}],
                 max_tokens=self.cfg.get("pipeline.max_tokens.draft", 400),
-                deadline_s=self.deadline)
+                deadline_s=self.deadline,
+                reasoning_effort=self.cfg.get("models.reasoning_effort"))
         except (DeadlineExceeded, BreakerOpen) as e:
             return Outcome_(send_reply(PassagesOnly(
                 "The model is busy; here are the passages that would answer this.",

@@ -16,6 +16,10 @@ meta:
 models:
   small:  {id: "openai/gpt-oss-20b",  rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
   large:  {id: "openai/gpt-oss-120b", rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+  # Sent ONLY to gpt-oss models, and never "none". "low" is the cheapest setting
+  # that stays inside the reasoning family; the probe records the verbatim 400 if
+  # the service rejects the parameter, so this is the fallback until then.
+  reasoning_effort: "low"
   buckets_separate_per_model: null    # set by P1 probe: exhaust one model, watch the other's headers
 
 user:
@@ -39,6 +43,13 @@ pipeline:
 gateway:
   retry_policy: managed               # managed | naive (naive exists only to show harm on the stand-in)
   retry_budget_ratio: 0.1             # fraction of traffic allowed to retry at all
+  # Hard cap on HTTP attempts per logical call. Distinct from the ratio: the ratio
+  # is "how much of traffic may retry at all", this is "how far one call may go".
+  max_attempts: 3
+  # Naive policy only (stand-in only, exists to demonstrate harm). Bounded so it
+  # cannot recurse; fixed backoff because the point is that it ignores retry-after.
+  naive_max_attempts: 5
+  naive_backoff_s: 0.2
   # Credit granted at start-up so a cold gateway can retry its first failures.
   # 1.0 = allow one retry before any traffic has accrued.
   retry_credit_floor: 1.0
