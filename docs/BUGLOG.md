@@ -384,6 +384,14 @@ path as a *default argument*, evaluated once at class definition. Patching the m
 constant in a test therefore did nothing and the test wrote **234 fictional tokens to
 the real ledger**. Default is now `None`, resolved at call time, and an autouse guard
 in `tests/conftest.py` redirects the path for every test.
+**Mutation check.** The regression test was verified to fail against the *original*
+control flow, not just to pass against the fix. Restoring `return 1` inside the
+`CeilingReached` handler and moving the ledger block back out of the `finally` makes it
+fail with `ABORTED RUN LOST ITS CHARGE -- the (o) bug is back`, the ledger still reading
+`# TOKEN LEDGER`. A first attempt at that check passed spuriously: the only thing
+reverted was the `finally` placement, but `main()` now computes `exit_code` instead of
+returning early, so the trailing block still ran. Position of the `finally` is not what
+fixes this — *not returning early* is. Both halves are load-bearing.
 **Lesson.** A budget ledger must be written in a `finally`, and a constant used as a
 default argument is not configurable.
 
@@ -413,7 +421,7 @@ credentials withheld.
 How the real `.env` was **simulated**: a single line, in the repository root, containing
 an obviously fake key —
 
-    printf 'GROQ_API_KEY=gsk_SIMULATEDnotarealkey0000000000\n' > .env
+    printf 'GROQ_API_KEY=FAKE_key_for_the_test_suite_only\n' > .env
 
 That is the whole simulation. It reproduces the condition that caused the bug (a `.env`
 on disk holding a key-shaped value that the loader will find) without ever possessing a

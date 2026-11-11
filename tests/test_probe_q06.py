@@ -176,7 +176,13 @@ def test_ledger_records_the_charge_when_the_probe_aborts_at_the_ceiling(tmp_path
 
 
 def test_main_writes_the_ledger_even_though_the_ceiling_aborts(monkeypatch, tmp_path):
-    """End to end through main(): the abort path must still save the ledger."""
+    """End to end through main(): the abort path must still save the ledger.
+
+    Failure path only, and it drives the REAL `TokenCeiling.reserve` instead of raising
+    `CeilingReached` by hand: the first call is charged 117 tokens, the second is
+    refused at a cap of 150 because 117 + 80 > 150. Fails against the original code
+    with "ABORTED RUN LOST ITS CHARGE".
+    """
     import scripts.probe as pm
     from relay.config import load_config
 
@@ -185,18 +191,27 @@ def test_main_writes_the_ledger_even_though_the_ceiling_aborts(monkeypatch, tmp_
     monkeypatch.setenv("GROQ_API_KEY", "test-key")
     monkeypatch.setenv("GROQ_BASE_URL", "http://fake.invalid")
 
-    # Force the ceiling to be hit immediately, after one real charge.
+    # Drive the REAL admission path rather than raising by hand: the first call is
+    # charged 117 real tokens, and by the time the second one asks for a reservation
+    # the cap is gone. That is the shape of the accident this pins -- a call that was
+    # paid for, followed by a refusal that used to discard the record of the payment.
     calls = {"n": 0}
 
     def fake_chat(self, **kw):
         calls["n"] += 1
-        self.ceiling.settle(80, 117)          # charge real tokens
-        raise pm.CeilingReached("reserving 80 would exceed the cap: test")
+        if calls["n"] == 1:
+            self.ceiling.reserve(80)          # the real reserve -> send -> settle flow
+            self.ceiling.settle(80, 117)
+            return pm.Result(mode="single", label="s0", model="m", status=200,
+                             usage={"total_tokens": 117}, body="ok",
+                             max_tokens_sent=80, token_param="max_completion_tokens")
+        self.ceiling.reserve(80)              # raises CeilingReached, unmodified
+        raise AssertionError("the ceiling should have refused the second call")
 
     monkeypatch.setattr(pm.Probe, "chat", fake_chat)
     monkeypatch.setattr(pm, "load_env", lambda *a, **k: None)
 
-    rc = pm.main(["--go", "--mode", "single", "--max-tokens-total", "1000",
+    rc = pm.main(["--go", "--mode", "single", "--max-tokens-total", "150",
                   "--timeout", "5", "--plan-today", "60000",
                   "--run-dir", str(tmp_path / "run")])
     assert rc == 1, "an abort must exit non-zero"

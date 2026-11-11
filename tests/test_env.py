@@ -18,7 +18,7 @@ from relay.env import find_env_file, load_env, parse_env_text
 def test_parses_the_shapes_found_in_real_dotenv_files():
     text = """
 # a comment
-GROQ_API_KEY=gsk_example
+GROQ_API_KEY=example_key
 export GROQ_BASE_URL=https://api.groq.com/openai/v1
 QUOTED="a value with spaces"
 SINGLE='single quoted'
@@ -28,7 +28,7 @@ EMPTY=
 not_a_pair_is_ignored
 """
     got = parse_env_text(text)
-    assert got["GROQ_API_KEY"] == "gsk_example"
+    assert got["GROQ_API_KEY"] == "example_key"
     assert got["GROQ_BASE_URL"] == "https://api.groq.com/openai/v1"
     assert got["QUOTED"] == "a value with spaces"
     assert got["SINGLE"] == "single quoted"

@@ -25,7 +25,7 @@ from scripts.probe import (
     truncate,
 )
 
-SECRET = "gsk_testkey_do_not_leak_0123456789"
+SECRET = "FAKE_KEY_DO_NOT_LEAK_0123456789"
 
 
 def make_probe(tmp_path, handler, *, cap=100_000, day_remaining=10**6, dry_run=False,
