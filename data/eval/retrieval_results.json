@@ -982,7 +982,7 @@
       "false_answer": 0.0,
       "n_answerable": 20,
       "n_unanswerable": 7,
-      "char_budget": 4400,
+      "char_budget": 3600,
       "chars_per_answer_mean": 2253.740740740741
     }
   },
@@ -1969,7 +1969,7 @@
       "false_answer": 0.14285714285714285,
       "n_answerable": 20,
       "n_unanswerable": 7,
-      "char_budget": 4400,
+      "char_budget": 3600,
       "chars_per_answer_mean": 3249.6666666666665
     }
   },
@@ -2498,14 +2498,13 @@
           "top": [
             "attn-v7:s5.1:c0000",
             "attn-v7:s6.1:c0000",
-            "attn-v7:s7:c0000",
-            "attn-v7:ss0:c0000"
+            "attn-v7:s7:c0000"
           ],
           "rank": 0,
           "id_rank": 0,
           "top_score": 48.273,
           "gated_in": true,
-          "chars": 4180
+          "chars": 2988
         },
         {
           "qid": "A3",
@@ -2569,14 +2568,13 @@
           "top": [
             "attn-v7:s6.1:c0000",
             "attn-v7:ss0:c0000",
-            "attn-v7:s7:c0000",
-            "attn-v7:s5.1:c0000"
+            "attn-v7:s7:c0000"
           ],
           "rank": 0,
           "id_rank": 0,
           "top_score": 46.505,
           "gated_in": true,
-          "chars": 4180
+          "chars": 3589
         },
         {
           "qid": "A7",
@@ -2587,14 +2585,13 @@
           "top": [
             "moshi-v1:s3.2.2:c0001",
             "hnet-v2:s3:c0006",
-            "moshi-v1:s4.4:c0000",
-            "attn-v7:s5.3:c0000"
+            "moshi-v1:s4.4:c0000"
           ],
-          "rank": 3,
-          "id_rank": 3,
+          "rank": null,
+          "id_rank": null,
           "top_score": 14.037,
           "gated_in": false,
-          "chars": 4001
+          "chars": 3554
         },
         {
           "qid": "A8",
@@ -2657,14 +2654,13 @@
           "top": [
             "moshi-v1:s2:c0009",
             "moshi-v1:s5.6:c0001",
-            "moshi-v1:s2:c0008",
-            "moshi-v1:s5.6:c0000"
+            "moshi-v1:s2:c0008"
           ],
           "rank": null,
           "id_rank": null,
           "top_score": 15.125,
           "gated_in": false,
-          "chars": 4388
+          "chars": 3193
         },
         {
           "qid": "H1",
@@ -2729,14 +2725,13 @@
           "top": [
             "attn-v7:s4:c0002",
             "moshi-v1:s6.2:c0003",
-            "moshi-v1:s7:c0055",
-            "moshi-v1:s6:c0000"
+            "moshi-v1:s7:c0055"
           ],
           "rank": null,
           "id_rank": null,
           "top_score": 16.728,
           "gated_in": true,
-          "chars": 3958
+          "chars": 3340
         },
         {
           "qid": "X4",
@@ -2748,14 +2743,13 @@
           "top": [
             "hnet-v2:s5:c0042",
             "hnet-v2:s5:c0044",
-            "moshi-v1:s5.4:c0006",
-            "moshi-v1:s5.5:c0003"
+            "moshi-v1:s5.4:c0006"
           ],
           "rank": null,
           "id_rank": null,
           "top_score": 15.876,
           "gated_in": true,
-          "chars": 4111
+          "chars": 3592
         },
         {
           "qid": "N1",
@@ -2909,14 +2903,13 @@
           "top": [
             "moshi-v1:s7:c0063",
             "moshi-v1:s5.5:c0003",
-            "moshi-v1:s4.4:c0005",
-            "moshi-v1:s4.4:c0001"
+            "moshi-v1:s4.4:c0005"
           ],
           "rank": null,
           "id_rank": null,
           "top_score": 12.254,
           "gated_in": false,
-          "chars": 3627
+          "chars": 2433
         },
         {
           "qid": "U4",
@@ -2934,15 +2927,15 @@
           "chars": 3584
         }
       ],
-      "recall_at_k": 0.5,
-      "recall_at_k_by_id": 0.45,
-      "mrr": 0.4041666666666666,
+      "recall_at_k": 0.45,
+      "recall_at_k_by_id": 0.4,
+      "mrr": 0.39166666666666666,
       "false_abstain": 0.25,
       "false_answer": 0.14285714285714285,
       "n_answerable": 20,
       "n_unanswerable": 7,
-      "char_budget": 4400,
-      "chars_per_answer_mean": 3613.5925925925926
+      "char_budget": 3600,
+      "chars_per_answer_mean": 3400.4074074074074
     }
   }
 ]
