@@ -13,9 +13,20 @@ Rules
 
 ## Budget
 
-| Day | Cap (TPD) | Planned | Spent | Remaining |
+| Day | Cap (TPD) | Planned (80% rule) | Spent | Remaining |
 |---|---|---|---|---|
-| (fill at P1) | UNVERIFIED ~200000 | probe | 0 | – |
+| Day 1: probe (cheap modes) | UNVERIFIED ~200000 | 60000 | 0 | 60000 |
+| Day 1 or 2: `bigctx` only | UNVERIFIED ~200000 | 60000 | 0 | 60000 |
+| Day 2: eval (15 q x ~5K x 3 settings) | UNVERIFIED ~200000 | 160000 | 0 | (about 225K needed -> spans 2 days) |
+| Day 3: eval cont. + final real runs | UNVERIFIED ~200000 | 160000 | 0 | 0 |
+
+**The 80% rule.** Never plan more than 80% of the daily cap on any day; the 20% buffer
+absorbs reasoning-token variance and the over-estimate on `est_tokens`. Until the limits
+page is read, the cap itself is UNVERIFIED and these plans are provisional.
+
+**Machine-readable block.** `scripts/probe.py` reads and rewrites the fenced
+`LEDGER:DATA` JSON block below. Do not edit that block by hand; edit the tables.
+The runner refuses to send when today's plan is exhausted.
 
 ## Real-API runs
 

@@ -192,3 +192,101 @@ def test_close_is_idempotent(tmp_path):
     lg.close()
     lg.close()
     assert lg.path.exists()
+
+
+# ------------------------------------------------- reserved envelope fields (BUG-005)
+
+def test_reserved_field_collision_raises(tmp_path):
+    from relay.events import ReservedFieldError
+
+    with EventLog(str(tmp_path), run_id="r1", backend="standin") as lg:
+        for bad in ({"run_id": "spoofed"}, {"t_mono": 0.0}, {"t_wall": 0.0},
+                    {"type": "spoofed"}, {"backend": "spoofed"}):
+            with pytest.raises(ReservedFieldError):
+                lg.emit("x", **bad)
+
+
+def test_req_id_is_not_reserved(tmp_path):
+    with EventLog(str(tmp_path), run_id="r1", backend="standin") as lg:
+        lg.emit("x", req_id="q9")       # must not raise
+        lg.flush()
+        assert read_events(lg.path)[0]["req_id"] == "q9"
+
+
+def test_attempt_timestamps_are_not_reserved(tmp_path):
+    """attempt.end legitimately carries t_first_byte/t_sent; only the envelope's
+    own keys are reserved."""
+    from relay.contracts import Attempt
+
+    with EventLog(str(tmp_path), run_id="r1", backend="standin") as lg:
+        s = lg.request("q1")
+        a = Attempt("a1", "q1", "draft", "groq", "m", t_sent=0.0)
+        s.attempt_start(a)
+        a.t_end, a.t_first_byte, a.t_first_token = 1.0, 0.1, 0.2
+        s.attempt_end(a)
+        lg.flush()
+        end = [e for e in read_events(lg.path) if e["type"] == "attempt.end"][0]
+    assert end["t_first_byte"] == 0.1
+
+
+# ------------------------------------------------------ backend scope (D-008)
+
+def test_attempt_backend_is_the_attempt_value_and_backend_is_run_scope(tmp_path):
+    from relay.contracts import Attempt
+
+    with EventLog(str(tmp_path), run_id="r1", backend="standin") as lg:
+        s = lg.request("q1")
+        a = Attempt("a1", "q1", "draft", "groq", "m", t_sent=0.0)
+        s.attempt_start(a)
+        a.t_end = 1.0
+        s.attempt_end(a)
+        s.finish("answered", total_elapsed_s=1.0, waiting_s=0.0,
+                 working_s=1.0, retrying_s=0.0)
+        lg.flush()
+        evs = read_events(lg.path)
+    start = [e for e in evs if e["type"] == "attempt.start"][0]
+    assert start["attempt_backend"] == "groq"   # per attempt
+    assert start["backend"] == "standin"        # run scope, not overwritten
+    assert "backend" not in start or start["backend"] == "standin"
+
+
+def test_primary_backend_is_majority(tmp_path):
+    from relay.contracts import Attempt
+
+    with EventLog(str(tmp_path), run_id="r1", backend="mixed") as lg:
+        s = lg.request("q1")
+        for i, be in enumerate(["groq", "standin", "standin"]):
+            a = Attempt(f"a{i}", "q1", "draft", be, "m", t_sent=0.0)
+            s.attempt_start(a)
+            a.t_end = 1.0
+            s.attempt_end(a)
+        assert s.primary_backend == "standin"
+        s.finish("answered", total_elapsed_s=1.0, waiting_s=0.0,
+                 working_s=1.0, retrying_s=0.0)
+        lg.flush()
+        term = [e for e in read_events(lg.path) if e["type"] == "terminal"][0]
+    assert term["primary_backend"] == "standin"
+
+
+def test_primary_backend_tie_falls_back_to_first_appearance(tmp_path):
+    from relay.contracts import Attempt
+
+    with EventLog(str(tmp_path), run_id="r1", backend="mixed") as lg:
+        s = lg.request("q1")
+        for i, be in enumerate(["groq", "standin"]):
+            a = Attempt(f"a{i}", "q1", "draft", be, "m", t_sent=0.0)
+            s.attempt_start(a)
+            a.t_end = 1.0
+            s.attempt_end(a)
+        assert s.primary_backend == "groq"
+
+
+def test_primary_backend_none_without_attempts(tmp_path):
+    with EventLog(str(tmp_path), run_id="r1", backend="standin") as lg:
+        s = lg.request("q1")
+        assert s.primary_backend is None
+        s.finish("no_evidence", total_elapsed_s=0.1, waiting_s=0.0,
+                 working_s=0.1, retrying_s=0.0)
+        lg.flush()
+        term = [e for e in read_events(lg.path) if e["type"] == "terminal"][0]
+    assert term["primary_backend"] is None

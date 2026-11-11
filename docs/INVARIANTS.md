@@ -11,6 +11,7 @@ Each invariant from the brief, where it is enforced, and what would catch a viol
 | 5 | `send_reply` accepts only `VerifiedAnswer | NoEvidence | PassagesOnly` | `contracts.is_reply()` is the single test; P5/P6 `send_reply` asserts it | I5 permitted reply types | `test_is_reply_is_the_h1_gate`, `test_unpermitted_reply_fails` |
 | 6 | No tokens consumed after abandonment | P7: cancel the task, then assert no `attempt.*` follows | I6 tokens after `request.abandoned` | `test_tokens_after_abandon_fail` |
 | 7 | Every cited chunk_id exists; every quote is a verbatim substring | P6 `verify.py`: code check before any LLM check | `scripts/check_citations.py` (lands with P2 chunks) | P6 |
+| 9 | (new, D-008) `backend` is run scope, `attempt_backend` is attempt scope | `ReservedFieldError` on any collision with the envelope | I7 | `test_reserved_field_collision_raises`, 4 `I7` cases |
 | 8 | `VerifiedAnswer` only via `mint_verified()`, only from `pipeline/verify.py` | `__post_init__` raises unless `_minted` | **AST lint** over `relay/` | `test_mint_verified_only_called_from_verify_module`, `test_direct_construction_rejected` |
 
 ## Rules -> enforcement

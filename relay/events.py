@@ -8,6 +8,15 @@ EVENT ORDERING CONTRACT (violated once already, see docs/BUGLOG.md BUG-001):
     request.start -> ... -> request.end -> terminal
 `request.end` carries the latency decomposition. The terminal event is LAST.
 Use finish() rather than emitting these two by hand.
+
+BACKEND SCOPE (DECISIONS D-008, decided by the supervisor after BUG-005):
+    envelope `backend`  = run scope: which backend this RUN used. For a run that
+                          mixes backends it is the PRIMARY backend (majority of
+                          attempts, first appearance breaks ties).
+    `attempt_backend`   = attempt scope: the backend that actually served THAT
+                          attempt. This is the field the naive-vs-managed
+                          comparison groups by.
+Before D-008 the envelope silently overwrote the per-attempt value.
 """
 from __future__ import annotations
 
@@ -27,6 +36,14 @@ class TerminalEventAlreadyEmitted(RuntimeError):
     """Second terminal event for one request. This is an invariant violation."""
 
 
+class ReservedFieldError(ValueError):
+    """A caller passed a field that collides with the event envelope.
+
+    Silently overwriting `run_id` or `t_mono` would corrupt the very fields every
+    report number is derived from (BUG-004).
+    """
+
+
 class RequestScope:
     """Per-request handle returned by EventLog.request().
 
@@ -38,7 +55,8 @@ class RequestScope:
     analysis checker (L6) is the backstop, because a bug could bypass the scope.
     """
 
-    __slots__ = ("_log", "req_id", "_terminal_emitted", "_attempts", "_abandoned_at")
+    __slots__ = ("_log", "req_id", "_terminal_emitted", "_attempts", "_abandoned_at",
+                 "_backend_counts", "_backend_first")
 
     def __init__(self, log: "EventLog", req_id: str):
         self._log = log
@@ -46,6 +64,8 @@ class RequestScope:
         self._terminal_emitted = False
         self._attempts: set[str] = set()
         self._abandoned_at: Optional[float] = None
+        self._backend_counts: dict[str, int] = {}
+        self._backend_first: list[str] = []
 
     # -- queries used by the pipeline/gateway
     @property
@@ -74,15 +94,37 @@ class RequestScope:
                 f"{self.req_id}: attempt {attempt.attempt_id} started after terminal"
             )
         self._attempts.add(attempt.attempt_id)
+        self._track_backend(getattr(attempt, "backend", None))
         self._log.emit(
             "attempt.start",
             req_id=self.req_id,
             attempt_id=attempt.attempt_id,
             step=attempt.step,
-            backend=attempt.backend,
+            attempt_backend=attempt.backend,
             model=attempt.model,
             t_sent=attempt.t_sent,
         )
+
+    def _track_backend(self, backend: Optional[str]) -> None:
+        if not backend:
+            return
+        self._backend_counts[backend] = self._backend_counts.get(backend, 0) + 1
+        if backend not in self._backend_first:
+            self._backend_first.append(backend)
+
+    @property
+    def primary_backend(self) -> Optional[str]:
+        """The run-scope backend for this request (D-008).
+
+        Majority wins; ties and empties fall back to first appearance. Deliberately
+        NOT literally "the first attempt": under concurrency that is a race, and a
+        request that fails over to another backend should not be labelled by the
+        one that failed.
+        """
+        if not self._backend_counts:
+            return None
+        return max(self._backend_first,
+                   key=lambda b: (self._backend_counts[b], -self._backend_first.index(b)))
 
     def attempt_end(self, attempt: Any) -> None:
         self._log.emit(
@@ -90,7 +132,7 @@ class RequestScope:
             req_id=self.req_id,
             attempt_id=attempt.attempt_id,
             step=attempt.step,
-            backend=attempt.backend,
+            attempt_backend=attempt.backend,
             model=attempt.model,
             t_sent=attempt.t_sent,
             t_first_byte=attempt.t_first_byte,
@@ -153,6 +195,7 @@ class RequestScope:
             )
         self._terminal_emitted = True
         value = getattr(terminal, "value", terminal)
+        fields.setdefault("primary_backend", self.primary_backend)
         self._log.emit("terminal", req_id=self.req_id, terminal=value, **fields)
 
 
@@ -176,9 +219,23 @@ class EventLog:
     def now(self) -> float:
         return time.monotonic()
 
+    #: Envelope keys owned by the log. `req_id` is NOT here: it is a legitimate
+    #: caller field (RequestScope supplies it, and direct emit() callers pass it).
+    RESERVED_FIELDS: Final[frozenset[str]] = frozenset(
+        {"type", "t_mono", "t_wall", "run_id", "backend"}
+    )
+    # `t_first_byte`, `t_sent`, `req_id` etc. are ordinary fields and must NOT be
+    # reserved -- attempt.end legitimately carries them.
+
     def emit(self, type_: str, **fields: Any) -> None:
         if self._closed:
             raise RuntimeError("EventLog.emit after close()")
+        clash = self.RESERVED_FIELDS.intersection(fields)
+        if clash:
+            raise ReservedFieldError(
+                f"event {type_!r} tried to set reserved envelope field(s) "
+                f"{sorted(clash)}; the envelope owns those keys"
+            )
         self._q.put({
             "type": type_,
             "t_mono": time.monotonic(),     # durations

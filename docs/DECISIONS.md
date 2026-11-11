@@ -69,3 +69,40 @@ an unparseable 429 stays `RATE_LIMITED_UNKNOWN` rather than being guessed into a
 "unknown", never to "safe to retry".
 **Rules out.** Retry decisions that depend on a parsed `retry-after` when it did not parse.
 **Re-open at P1.** The probe in `docs/OPEN_QUESTIONS.md` replaces every claim with an observation.
+
+### D-008 · 2026-11-11 · P0 · `backend` is run scope, `attempt_backend` is attempt scope
+**Decision.** The event envelope keeps `backend` = the run's backend. Attempt events carry
+`attempt_backend` = the backend that served that attempt. A terminal event carries
+`primary_backend` = majority of attempts, ties to first appearance.
+**Why.** A new reserved-field guard (BUG-004) revealed that both meanings had been sharing
+one key, so the per-attempt value was silently lost (BUG-005). The supervisor chose
+"envelope wins, rename the attempt field" and "primary" for mixed runs.
+**Deviation, flagged.** "Primary" is implemented as *majority with first-appearance
+tie-break*, not literally the first attempt. Literal first is a race under concurrency and
+mislabels a request that failed over. Revert to strict-first on request.
+**Rules out.** Run-level `backend` meaning "the backend of the first attempt".
+**Re-open if.** A run is defined as single-backend by construction (then `mixed` disappears
+and the envelope field is redundant).
+
+### D-009 · 2026-11-11 · P1 · The probe is dry-run by default and ceiling-gated
+**Decision.** `scripts/probe.py` sends nothing without both `--go` and
+`--max-tokens-total N`; the ceiling uses reserve-before-send so a request that turns out
+to cost more than estimated cannot overshoot it. No retries. Authorization is never
+logged and the key value is scrubbed from every artefact as a second defence. Spend is
+appended to `docs/TOKEN_LEDGER.md` only on `--go`. `rpd` is excluded from `--mode all`.
+**Why.** The probe is the first code that spends real money, and the failure mode of a
+probe is a silent overspend on day 1. Reserve-before-send is the only ordering that
+cannot overshoot, because it does not depend on knowing the cost in advance.
+**Rules out.** A probe that retries (a failure is data), and a probe that infers the
+key is absent rather than refusing.
+**Re-open if.** The measured daily cap makes a 60K day plan obviously wrong.
+
+### D-010 · 2026-11-11 · P1 · `bigctx` must not run inside the default plan
+**Decision.** `bigctx` is measured with its own token reservation, not as part of `--mode all`.
+**Why.** The dry run's own arithmetic: a 400-repeat filler prompt is ~240K tokens at the
+deliberate over-estimate (÷3 chars), four times the whole 60K day plan. The over-estimate
+is *correct* behaviour — it refused before spending — but the mode as specified would
+have needed a second day.
+**Rules out.** A single `--go` invocation covering `bigctx` plus everything else.
+**Re-open when.** `usage.prompt_tokens` for a known prompt is measured; the divisor moves
+from 3 to the observed chars-per-token and bigctx shrinks accordingly.

@@ -11,7 +11,10 @@ Invariants checked here (the ones decidable from events alone):
   I3  no bucket goes negative
   I4  waiting + working + retrying ~= total (using counted sleeps)
   I5  no reply emitted that is not a permitted reply type
-  I6  no tokens consumed after abandonment
+  I6  no tokens consumed after abandon
+  I7  backend scope: an attempt event's envelope `backend` must match its
+      `attempt_backend` unless the run genuinely mixed backends (else the
+      per-attempt value was lost -- BUG-005)ment
 
 Usage:
     python scripts/check_events.py runs/<run>/events.jsonl [--json]
@@ -155,6 +158,24 @@ def check(events: Iterable[dict], latency_tol_s: float = 0.05) -> Report:
             rep.violations.append(Violation(
                 "I4_latency_sum", req_id, "retry sleeps recorded but no request.end totals"))
 
+        # I7 backend scope: attempt_backend must be present, and must agree with the
+        # envelope unless this request mixed backends (D-008).
+        mixed = len({e.get("attempt_backend") for e in evs
+                     if e.get("type") in ATTEMPT_TYPES and e.get("attempt_backend")}) > 1
+        for e in evs:
+            if e.get("type") not in ATTEMPT_TYPES:
+                continue
+            ab, env = e.get("attempt_backend"), e.get("backend")
+            if ab is None and e.get("type") == "attempt.start":
+                rep.violations.append(Violation(
+                    "I7_backend_scope", req_id,
+                    "attempt.start has no attempt_backend: per-attempt provenance lost"))
+            elif ab is not None and env is not None and ab != env and not mixed:
+                rep.violations.append(Violation(
+                    "I7_backend_scope", req_id,
+                    f"envelope backend={env!r} != attempt_backend={ab!r} "
+                    f"with no mixed backends in this request"))
+
     # I3 no negative bucket
     for ev in events:
         if ev.get("type") != "budget.update":
@@ -175,8 +196,9 @@ def main(argv: list[str]) -> int:
     if len(argv) < 2:
         print("usage: check_events.py <events.jsonl> [--json]", file=sys.stderr)
         return 2
-    with open(argv[1], encoding="utf-8") as f:
-        pass  # existence check
+    if not Path(argv[1]).is_file():
+        print(f"error: no such events file: {argv[1]}", file=sys.stderr)
+        return 2
     events = _load(argv[1])
     rep = check(events)
     if "--json" in argv:
