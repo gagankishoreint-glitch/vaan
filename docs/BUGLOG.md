@@ -205,3 +205,46 @@ non-bold title; body-sized numbered lines are accepted via the monotonicity rule
 `test_body_sized_numbered_heading_accepted_by_sequence`,
 `test_split_heading_across_two_lines`, and the integration guard
 `test_real_pdfs_produce_sane_sections`.
+
+---
+
+# P4-P6 bugs (compressed mode)
+
+## BUG-009 · L3 gateway · retry budget computed per-call, so it was always zero
+**Cause.** `max(1, int(self._calls * ratio))` was evaluated inside each call, so
+with `ratio=0.1` the limit was `int(0.1)=0` on call 1 and `int(0.2)=0` on call 2 —
+a retry could never happen until the 10th call, and `max(1, ...)` then allowed
+exactly one for the rest of the run.
+**Fix.** An accruing credit that grows by `retry_budget_ratio` per call and is
+spent one unit per retry, plus `gateway.retry_credit_floor` so a cold gateway can
+retry its first failure.
+**Lesson.** A budget expressed as a *rate* must be integrated, not re-derived from
+a counter each time.
+
+## BUG-010 · L3 gateway · reconcile mixed two different limits
+**Cause.** `provider_used = self.tpm - remaining_tpm` reconstructed the provider's
+usage using *our* limit. When the two differed (a large local budget against the
+stand-in's 8000), `remaining=0` became `used=10**9` and every subsequent request
+was refused locally as "TPM exhausted" — a self-inflicted outage that looked like
+correct rate limiting.
+**Fix.** Learn the provider's advertised limit from `x-ratelimit-limit-*`, convert
+`remaining` to a *fraction*, and apply that fraction to our own limit. Reconciling
+without a learned limit is now a no-op.
+**Test.** `test_budget_reconcile_uses_provider_ratio_not_our_limit`,
+`test_budget_reconcile_without_learned_limits_is_a_noop`.
+
+## BUG-011 · L4 pipeline · terminal `reply_type` named the terminal state
+**Cause.** The terminal event carried `reply_type=Terminal.ANSWERED` (`"answered"`)
+while the checker's permitted set is `verified_answer | no_evidence |
+passages_only`. Four of eight requests were reported as H1 violations — the
+checker was right and the pipeline was wrong.
+**Fix.** `reply_type_of(reply)` names the reply *class*. `terminal` and
+`reply_type` are different axes: how the request ended vs what was sent.
+
+## BUG-012 · L4 pipeline · transport errors escaped without a terminal event
+**Cause.** An `httpx.ConnectError` propagated out of `run_queries`, so a request
+got `request.start` and `request.end` but no `terminal` — an I1 violation, and the
+request would vanish from every report.
+**Fix.** Transport failures are caught and converted into a `PassagesOnly` reply.
+The user still gets an honest answer, and the log still has exactly one terminal.
+**Test.** The checker on a run with the stand-in down reports `violations=0`.

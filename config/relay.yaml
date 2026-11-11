@@ -39,6 +39,9 @@ pipeline:
 gateway:
   retry_policy: managed               # managed | naive (naive exists only to show harm on the stand-in)
   retry_budget_ratio: 0.1             # fraction of traffic allowed to retry at all
+  # Credit granted at start-up so a cold gateway can retry its first failures.
+  # 1.0 = allow one retry before any traffic has accrued.
+  retry_credit_floor: 1.0
   attempt_timeout_s: null             # set by P1 probe: p99 of stand-in fast path, plus margin
   queue_max: null                     # set by P1: depth at which admission starts queueing/shedding
   breaker: {fail_threshold: 5, open_s: 10}
@@ -48,6 +51,8 @@ gateway:
   # records why. Set only once the real day-limit retry-after is observed (Q-09).
   day_429_min_retry_after_s: null     # set by P1 Q-09: observed day-limit retry-after
   request_deadline_s: null            # set by L5: user patience minus reply-render margin
+  # Provisional during P6 (stand-in only); replaced by the L5 patience measurement.
+  request_deadline_standin_s: 30.0
 
 ladder:
   # PRD s6. L0 and L3 are structural; L1 and L2 need measured thresholds.
@@ -61,6 +66,10 @@ retrieval:
   chunk_overlap: null                 # set by P2: chosen against measured retrieval recall
   bm25_k1: 1.5                        # library default; re-tuned only if P10 shows it matters
   bm25_b: 0.75
+  # Evidence gate: top-1 BM25 score at or above this means "strong evidence".
+  # MEASURED in P3 at chunk_size 900 via scripts/retrieval_eval.py (25th pct of
+  # answerable top-1 scores). Re-measure if the corpus changes.
+  gate_threshold: 15.86
 
 standin:
   seed: 7

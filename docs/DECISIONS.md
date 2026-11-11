@@ -140,3 +140,22 @@ would make the retriever look better than it is and delete the evidence. Choosin
 900/150 now would be choosing a number P10 exists to measure.
 **Re-open at P10.** If a filter improves recall@k, it becomes a *measured* setting with
 the untouched corpus as its control.
+
+### D-014 · 2026-11-11 · P4 · the stand-in may use raw time; nothing else may
+**Decision.** `tests/test_lint_rules.py` allows `time.monotonic()` and
+`asyncio.sleep()` in `relay/standin/server.py` only.
+**Why.** Rule 7 exists so our own duration measurements are injectable and testable.
+The stand-in's entire job is to *fabricate* latency; forcing it through our Clock
+would make it measure itself. The allowlist entry carries this justification inline.
+**Re-open if.** Any other module is added to the allowlist — at that point the rule
+has stopped meaning anything.
+
+### D-015 · 2026-11-11 · P6 · the evidence gate is permissive on purpose
+**Decision.** `retrieval.gate_threshold: 15.86` is committed and the gate admits
+when top-1 >= it. It is deliberately not tuned to minimise false-answers.
+**Why.** P3 measured that no single BM25 threshold separates answerable from
+unanswerable (26% false-abstain and 12.5% false-answer at the same point). A strict
+gate would refuse real questions; a loose one is safe *because* `verify.py` enforces
+H1 afterwards. Verification is the guarantee; the gate is only a cost control.
+**Rules out.** Treating the BM25 score as the safety mechanism.
+**Re-open at P10.** If a reranker improves separation, the gate can tighten.

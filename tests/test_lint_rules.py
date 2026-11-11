@@ -37,7 +37,10 @@ def test_mint_verified_only_called_from_verify_module():
 
 def test_no_direct_time_monotonic_outside_clock():
     """Rule 7: durations go through the injectable Clock."""
-    allowed = {PKG / "clock.py", PKG / "events.py"}
+    # relay/standin/server.py is the SIMULATED PROVIDER: it must use raw time to
+    # pretend to be a remote service. Rule 7 governs our own measurement of
+    # durations, not a component whose job is to fabricate them (D-014).
+    allowed = {PKG / "clock.py", PKG / "events.py", PKG / "standin" / "server.py"}
     offenders = []
     for path in py_files(PKG):
         if path in allowed:
@@ -50,7 +53,7 @@ def test_no_direct_time_monotonic_outside_clock():
 
 def test_no_asyncio_sleep_outside_clock():
     """Rule 7 + testability: no bare asyncio.sleep in production code."""
-    allowed = {PKG / "clock.py"}
+    allowed = {PKG / "clock.py", PKG / "standin" / "server.py"}   # see D-014
     offenders = []
     for path in py_files(PKG):
         if path in allowed:
