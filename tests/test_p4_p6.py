@@ -634,3 +634,61 @@ def test_streamed_and_buffered_pipelines_agree(index_900):
                         f"set RELAY_REQUIRE_STANDIN=1 to make this a failure. "
                         f"Hermetic equivalents still ran.")
     assert buffered.terminal == streamed.terminal, (buffered.terminal, streamed.terminal)
+
+
+# ---------------------------------------------------------------- char budget
+
+def test_char_budget_truncates_and_reports_chars():
+    """(l) Fixed k confounds chunk size with context size. The budget holds context
+    constant so the comparison is about cutting."""
+    from relay.retrieval.bm25 import Retriever
+    from scripts.retrieval_eval import evaluate, search_within_budget
+    from tests.indexes import write_index
+    import tempfile, pathlib
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    r = Retriever.from_jsonl(write_index(tmp, 1200, 200))
+    # A question whose 1200/200 context actually exceeds 3600 chars: the cap biting
+    # is a property of the specific retrieval (22 of 27 questions exceed it on
+    # average), so picking one that does not would make the test prove nothing.
+    q = ("What is the purpose of Inner Monologue in Moshi?")
+    full = search_within_budget(r, q, 4, None)
+    capped = search_within_budget(r, q, 4, 3600)
+    assert len(capped) <= len(full)
+    assert sum(len(h.chunk.text) for h in capped) <= 3600 or len(capped) == 1
+    # the cap must actually bite at this setting, or the test proves nothing
+    assert sum(len(h.chunk.text) for h in full) > 3600, (
+        "this question no longer exceeds the budget; pick another")
+
+
+def test_char_budget_always_returns_at_least_one_hit():
+    """A budget smaller than one chunk must not produce an empty context: that would
+    score an impossible comparison instead of an overshoot."""
+    from relay.retrieval.bm25 import Retriever
+    from scripts.retrieval_eval import search_within_budget
+    from tests.indexes import write_index
+    import tempfile, pathlib
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    r = Retriever.from_jsonl(write_index(tmp, 900, 150))
+    hits = search_within_budget(r, "attention heads", 4, 10)
+    assert len(hits) == 1, "must keep one hit even when it exceeds the budget"
+
+
+def test_equal_budget_does_not_favour_larger_chunks():
+    """The measured result: at equal characters, 1200/200 is not better than
+    900/150. Pinned so a future change that reintroduces the confound is visible."""
+    from relay.retrieval.bm25 import Retriever
+    from scripts.retrieval_eval import evaluate, sweep
+    from tests.indexes import write_index
+    import json as _j
+    import tempfile, pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    tmp = pathlib.Path(tempfile.mkdtemp())
+    qs = [_j.loads(l) for l in open(root / "data/eval/questions.jsonl") if l.strip()]
+    quotes = _j.loads((root / "data/eval/gold_quotes.json").read_text())
+    r9 = Retriever.from_jsonl(write_index(tmp, 900, 150))
+    r12 = Retriever.from_jsonl(write_index(tmp, 1200, 200))
+    e9 = evaluate(r9, qs, 4, 15.86, quotes, char_budget=3600)
+    e12 = evaluate(r12, qs, 4, 15.88, quotes, char_budget=3600)
+    assert e9["recall_at_k"] >= e12["recall_at_k"], (
+        f"equal-budget recall favours 1200/200 ({e12['recall_at_k']:.2f} vs "
+        f"{e9['recall_at_k']:.2f}); either the corpus changed or the confound is back")

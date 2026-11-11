@@ -19,6 +19,7 @@ import httpx
 
 from relay.clock import RealClock
 from relay.config import load_config
+from relay.env import load_env
 from relay.contracts import NoEvidence, PassagesOnly, VerifiedAnswer
 
 
@@ -45,7 +46,10 @@ async def main_async(a) -> int:
     questions = [json.loads(l) for l in
                  open(a.questions, encoding="utf-8") if l.strip()][: a.limit]
     r = Retriever.from_jsonl(a.chunks)
-    key = os.environ.get("GROQ_API_KEY", "standin")
+    # .env is loaded so a key placed there works for every entry point, not just
+    # the probe. Default "standin" keeps the local path working with no key at all.
+    load_env()
+    key = os.environ.get("GROQ_API_KEY") or "standin"
 
     async with httpx.AsyncClient(base_url=a.base_url, timeout=60.0) as client:
         gw = Gateway.from_config(cfg, clock, log, base_url=a.base_url,

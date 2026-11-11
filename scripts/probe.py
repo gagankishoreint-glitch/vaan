@@ -41,6 +41,7 @@ from typing import Any, Callable, Final, Optional
 import httpx
 
 from relay.config import Config, ConfigError, load_config
+from relay.env import load_env
 from relay.ratelimit_headers import parse_rl_headers
 
 PROBE_VERSION: Final = 1
@@ -306,6 +307,11 @@ class Result:
     gaps: list[float] = field(default_factory=list)
     raw_lines: list[str] = field(default_factory=list)
     est_tokens: int = 0
+    #: The generation cap actually sent, and under which field name. Q-06 compares
+    #: the observed drop against this, so it must be recorded per call and not
+    #: re-derived later.
+    max_tokens_sent: Optional[int] = None
+    token_param: Optional[str] = None
     charged: int = 0
     error: Optional[str] = None
     dry_run: bool = False
@@ -371,7 +377,13 @@ class Probe:
         models: dict[str, str],
         sleeper: Callable[[float], None] = time.sleep,
         client: Optional[httpx.Client] = None,
+        token_param: str = "max_completion_tokens",
     ):
+        if token_param not in ("max_tokens", "max_completion_tokens"):
+            raise ValueError(
+                f"token_param must be max_tokens or max_completion_tokens, "
+                f"got {token_param!r}")
+        self.token_param = token_param
         self.cfg = cfg
         self.base_url = base_url.rstrip("/")
         self.api_key = api_key
@@ -432,10 +444,15 @@ class Probe:
         extra: Optional[dict] = None,
         record: bool = True,
     ) -> Result:
+        # Which field carries the generation cap is NOT a detail: Q-06 asks whether
+        # TPM is reserved as the cap up front, and the answer depends on which field
+        # the service honours. The gateway sends `max_completion_tokens`, so the
+        # probe must be able to send the same one or its Q-06 answer will describe
+        # a request shape the product never makes.
         body: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "max_tokens": max_tokens,
+            self.token_param: max_tokens,
             "temperature": 0,
             "stream": stream,
         }
@@ -443,8 +460,11 @@ class Probe:
             body.update(extra)
 
         prompt = "".join(m.get("content", "") for m in messages)
+        # Ceiling estimate. NEVER used as a measurement: it only reserves budget so
+        # the hard cap cannot be overshot. `prompt_overhead()` is what Q-06 uses.
         est = est_tokens(prompt) + max_tokens
         res = Result(mode=mode, label=label, model=model, est_tokens=est,
+                     max_tokens_sent=max_tokens, token_param=self.token_param,
                      dry_run=self.dry_run)
 
         if self.dry_run:
@@ -459,7 +479,7 @@ class Probe:
             self.ceiling.settle(est, None)
             self.plan_lines.append(
                 f"  {mode:<9} {label:<22} model={model:<22} "
-                f"max_tokens={max_tokens:<5} est≈{est} tokens"
+                f"{self.token_param}={max_tokens:<5} est≈{est} tokens"
                 + ("  [stream]" if stream else ""))
             return res
 
@@ -473,6 +493,10 @@ class Probe:
         finally:
             charge = self.ceiling.settle(est, (res.usage or {}).get("total_tokens"))
             res.charged = charge
+            # First real usage.prompt_tokens -> measured overhead, replacing len/3.
+            pt = (res.usage or {}).get("prompt_tokens")
+            if pt and self.prompt_overhead() is None:
+                self.record_overhead(int(pt))
         if record:
             self.rec.write(mode, res.to_record())
         return res
@@ -607,27 +631,105 @@ class Probe:
             self._analyse_tpm_reserve(out)
         return out
 
-    def _analyse_tpm_reserve(self, rs: list[Result]) -> None:
-        """Q-06: is TPM charged on actual tokens or reserved as max_tokens up front?
+    def record_overhead(self, overhead: int) -> None:
+        """Remember the measured per-call prompt overhead from a real response.
 
-        Inference, not proof: between two back-to-back responses the TPM bucket also
-        refills, which biases the observed drop *downwards*. A drop close to
-        max_tokens is therefore strong evidence for reservation; a drop close to
-        usage is weaker evidence for charge-on-actual because refill masks it.
-        The verdict is printed with the residuals so it can be judged, not trusted.
+        `est_tokens` divides characters by 3, which came out at 88 tokens per call
+        against 117 reported in `usage.prompt_tokens` -- a 33% error, and the error
+        appeared on BOTH sides of the Q-06 comparison, so "closer" was meaningless.
+        The first real `usage.prompt_tokens` replaces the guess, and it also absorbs
+        the chat-template wrapper the service adds but the client never sends.
         """
-        pairs = [a for a in rs if a.usage and a.rl.get("remaining_tpm") is not None]
-        if len(pairs) < 2:
+        self._prompt_overhead = int(overhead)
+        self.note("Q-06", f"measured prompt overhead = {overhead} tokens "
+                          f"(replaces the len/3 estimate)", "single.jsonl")
+
+    def prompt_overhead(self) -> Optional[int]:
+        """Tokens the service charges that are not in our prompt text.
+
+        Prefers a measured value. Falls back to the estimate only for planning, and
+        the fallback is reported as None here so Q-06 refuses to answer on it.
+        """
+        return getattr(self, "_prompt_overhead", None)
+
+    def _analyse_tpm_reserve(self, rs: list[Result]) -> None:
+        """Q-06: is TPM charged on actual tokens or reserved as the cap up front?
+
+        This used to compare the drop between two responses against both candidates
+        and pick the closer one. That verdict was invalid, for three reasons:
+
+        1. **The bucket refills.** Between two responses, `remaining_tokens` can go
+           UP. An observed drop of -50 means no measurement of consumption was made
+           at all, yet the old code still reported whichever estimate looked nearer.
+           Choosing the closer of two bad numbers is not evidence.
+        2. **The estimates were fabricated.** `est_tokens` was `len/3` -- 88 tokens
+           per call against 117 actually reported in `usage.prompt_tokens`. Both
+           candidate costs were wrong, so "closer" meant nothing.
+        3. **The reads were far apart.** The gap between the two header reads was
+           never checked, so any refill in between silently corrupted the delta.
+
+        The test is now: read `remaining_tokens` immediately before and immediately
+        after ONE call, require the reads to be under `MAX_GAP_S` apart, require the
+        drop to be positive, and compare it to the measured prompt overhead plus the
+        observed completion tokens. Anything else prints INCONCLUSIVE and says which
+        condition failed.
+        """
+        MAX_GAP_S = 1.0
+        cands = [r for r in rs if r.usage and r.rl.get("remaining_tpm") is not None
+                 and r.t_sent is not None and r.t_end is not None]
+        if len(cands) < 2:
+            self.note("Q-06", "INCONCLUSIVE (fewer than 2 calls with both "
+                              "remaining_tokens and timestamps)", "single.jsonl")
             return
-        a, b = pairs[-2], pairs[-1]
+
+        # Take the LAST adjacent pair and check the three conditions on it.
+        a, b = cands[-2], cands[-1]
+        gap = (b.t_sent - a.t_end) if (b.t_sent is not None and a.t_end is not None) else None
         drop = a.rl["remaining_tpm"] - b.rl["remaining_tpm"]
-        used = b.usage.get("total_tokens") or 0
-        cost_vs_actual = abs(drop - used)
-        cost_vs_reserve = abs(drop - (b.est_tokens or 0))
-        verdict = ("looks like max_tokens reservation" if cost_vs_reserve < cost_vs_actual
-                   else "looks like charge-on-actual (refill may mask this)")
-        line = (f"Q-06 tpm drop={drop} usage={used} est_with_max_tokens={b.est_tokens} "
-                f"-> {verdict}")
+        used_total = b.usage.get("total_tokens") or 0
+        used_prompt = b.usage.get("prompt_tokens")
+        used_completion = b.usage.get("completion_tokens") or 0
+        overhead = self.prompt_overhead()
+
+        problems = []
+        if gap is None or gap >= MAX_GAP_S:
+            problems.append(f"read gap {gap if gap is None else round(gap, 2)}s "
+                            f">= {MAX_GAP_S}s")
+        if drop <= 0:
+            problems.append(f"tpm drop={drop} is not positive "
+                            f"(the bucket refilled, so nothing was measured)")
+        if used_total <= 0:
+            problems.append("usage.total_tokens missing, so there is nothing to "
+                            "compare the drop against")
+        if overhead is None:
+            problems.append("no measured prompt overhead yet (needs a real "
+                            "usage.prompt_tokens)")
+
+        if problems:
+            self.note("Q-06", "INCONCLUSIVE (refill confound): " + "; ".join(problems),
+                      "single.jsonl")
+            return
+
+        # cap up front vs actual usage, both with the MEASURED overhead
+        cap = b.max_tokens_sent or 0
+        cost_reserve = overhead + cap
+        cost_actual = (used_prompt if used_prompt is not None
+                       else overhead) + used_completion
+        d_reserve = abs(drop - cost_reserve)
+        d_actual = abs(drop - cost_actual)
+
+        if d_reserve < d_actual:
+            verdict = (f"ANSWERED: drop {drop} is closer to cap-reserve "
+                       f"{cost_reserve} than to actual {cost_actual}")
+        elif d_actual < d_reserve:
+            verdict = (f"ANSWERED: drop {drop} is closer to actual {cost_actual} "
+                       f"than to cap-reserve {cost_reserve}")
+        else:
+            verdict = "INCONCLUSIVE (the two candidates are equally distant)"
+        line = (f"Q-06 {verdict} | gap={None if gap is None else round(gap,3)}s "
+                f"overhead={overhead} prompt_tokens={used_prompt} "
+                f"completion_tokens={used_completion} "
+                f"token_param={self.token_param}")
         self.note("Q-06", line, "single.jsonl")
 
     def mode_stream(self) -> list[Result]:
@@ -844,6 +946,12 @@ def build_parser() -> argparse.ArgumentParser:
                    help="actually send requests (requires --max-tokens-total)")
     p.add_argument("--max-tokens-total", type=int, default=None,
                    help="HARD ceiling for the whole session, in tokens")
+    p.add_argument("--token-param", default="max_completion_tokens",
+                   choices=["max_completion_tokens", "max_tokens"],
+                   help="which JSON field carries the generation cap. Defaults to "
+                        "max_completion_tokens because that is what the gateway "
+                        "sends; Q-06 must be re-confirmed with the same field the "
+                        "product uses.")
     p.add_argument("--timeout", type=float, default=None,
                    help="per-request timeout in seconds (required with --go)")
     p.add_argument("--mode", action="append", default=None, choices=MODE_ORDER + ["all"],
@@ -901,10 +1009,21 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
+    # Load .env BEFORE reading anything from the environment: the old message told
+    # the user to create .env and then never read it, so following the instruction
+    # did nothing.
+    env_file = load_env()
     api_key = os.environ.get("GROQ_API_KEY") or None
     if args.go and not api_key:
-        print("error: GROQ_API_KEY is not set. Copy .env.example to .env.",
-              file=sys.stderr)
+        looked = f"looked for {env_file}" if env_file else (
+            "no .env file found in the working directory or the repo root")
+        print(
+            "error: GROQ_API_KEY is not set.\n"
+            f"  {looked}.\n"
+            "  Either export it:      export GROQ_API_KEY=...\n"
+            "  or put it in .env:     cp .env.example .env   (then fill it in)\n"
+            "  .env is loaded automatically and is git-ignored.",
+            file=sys.stderr)
         return 2
 
     base_url = args.base_url or os.environ.get("GROQ_BASE_URL") or ""
@@ -938,7 +1057,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     rec = Recorder(run_dir, api_key, dry_run)
     probe = Probe(cfg=cfg, base_url=base_url or "http://dry-run.invalid",
                   api_key=api_key, ceiling=ceiling, recorder=rec, dry_run=dry_run,
-                  timeout=args.timeout, models=models)
+                  timeout=args.timeout, models=models,
+                  token_param=args.token_param)
 
     if args.bigctx_repeat is not None:
         print("error: --bigctx-repeat is gone. bigctx is now sized in tokens so it "

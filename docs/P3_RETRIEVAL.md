@@ -79,35 +79,55 @@ evidence** and a hit on them means "this chunk contains the passage the answer w
 drawn from", not "this chunk contains the answer". Any claim resting on them should
 be discounted accordingly.
 
-### Chosen: 900/150 — and the reason is now weaker than before
+### The chunk-size comparison was confounded with context size
 
-Quote-based scoring puts **1200/200 ahead on both recall (11/20 vs 10/20) and MRR
-(0.417 vs 0.412)**. The committed setting is still 900/150, for one reason:
+At a fixed `k=4`, a bigger chunk also means **more context**. Mean chunk length is
+570 / 845 / 1110 characters, so `k=4` retrieves:
 
-| | 900/150 finds | 1200/200 finds |
-|---|---|---|
-| difference | A3 | A1, H1 |
+| setting | chars/answer at fixed k |
+|---|---|
+| 600/100 | 2254 |
+| 900/150 | 3250 |
+| 1200/200 | 4260 |
 
-One question lost, two gained, on n=20. **That is noise**, and MRR differs by .005.
-Switching the committed chunking on a two-question margin would be the same error as
-retuning the gate threshold to the argmin of a 27-point sweep — fitting to a sample
-too small to support the choice. The honest statement is that **1200/200 is probably
-better and we cannot show it**; a larger eval set settles it, not a different table.
+So "1200/200 has better recall" could simply mean "more text was shown". That is not
+a comparison of chunkings.
 
-If the pipeline is re-run after the eval set grows, switch to 1200/200 and re-measure
-`gate_threshold`, which is derived from the chosen index.
+`--char-budget` removes it: every setting is capped to the same number of retrieved
+characters, and the mean is reported so the cap is auditable.
 
-## Per-type recall at 900/150
+| setting | recall (fixed k) | **recall (3600 chars)** | MRR (fixed k) | **MRR (3600 chars)** |
+|---|---|---|---|---|
+| 600/100 | 40.0% | 40.0% | 0.30 | 0.30 |
+| **900/150** | 50.0% | **50.0%** | 0.41 | **0.41** |
+| 1200/200 | **55.0%** | **45.0%** | 0.42 | **0.39** |
 
-| type | recall | note |
-|---|---|---|
-| single-paper | 7/12 | the bulk of the set |
-| numeric/table | 3/4 | **the contamination risk did not bite at chunk level** |
-| cross-paper | 1/4 | **the clear weakness** |
+**1200/200's entire advantage was extra context.** Held to the same 3600 characters
+it falls *below* 900/150 on both recall (45% vs 50%) and MRR (.39 vs .41).
 
-Cross-paper questions need one chunk to rank for a question whose evidence spans
-two papers; BM25 has no notion of that. 1/4 is the number to quote, not a rounded
-"most questions work".
+The result is monotone in the budget, which is what makes it credible rather than a
+lucky cap:
+
+| budget | 600/100 | 900/150 | 1200/200 |
+|---|---|---|---|
+| 2400 | 40.0% | **45.0%** | 45.0% |
+| 3600 | 40.0% | **50.0%** | 45.0% |
+| 4400 | 40.0% | **50.0%** | 50.0% |
+
+900/150 is never worse than 1200/200 at any budget, and is strictly better at 3600.
+1200/200 only matches it at 4400, where it is retrieving more characters than 900/150
+can use.
+
+### Chosen: 900/150 — now for the right reason
+
+The committed setting survives, but the earlier justification was wrong. It was
+"recall ties and MRR is better"; in fact at fixed k, 1200/200 led on both. The
+correct justification is the equal-budget table: **900/150 gives the best retrieval
+per character retrieved.** Larger chunks buy nothing once context is held constant,
+and they cost prompt tokens, latency and money.
+
+This is also why `gate_threshold` is derived per index: moving to 1200/200 would
+require re-deriving it.
 
 ## The finding that matters: the gate cannot be perfect, and the sweep says by how much
 

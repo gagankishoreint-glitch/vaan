@@ -326,3 +326,44 @@ accidentally perfectly aligned. Any real model that wraps a line would have
 triggered it.
 **Test.** `test_verification_normalises_whitespace_between_draft_and_source`,
 `test_streamed_and_buffered_pipelines_agree`.
+
+## BUG-020 · L4 instrumentation · "verification cost" was actually generation time
+**Cause.** `user_ttft - model_ttft` was reported as verification cost. But H1 forbids
+showing anything unverified, so the pipeline cannot observe the user-facing answer
+until the draft is COMPLETE — the whole of the remaining generation sits inside that
+gap. Measured as "verification": 0.10–0.32 s.
+**Actual.** With `generation_end` stamped: generating 0.196–0.259 s, **verifying
+0.0003–0.0006 s**. The claim was wrong by ~300×.
+**Fix.** `Attempt.t_generation_end`, stamped when the stream closes, logged on
+`attempt.end` and split out in `reply.ready` as `generating_s` / `verifying_s`.
+**Why it matters beyond the number.** The wrong figure supported a wrong argument
+("verification is why we need a degradation ladder"). Verification is free; the
+ladder would have to act on generation, and it would have to act before the call.
+**Lesson.** A two-point measurement cannot attribute a gap that contains a third,
+unmeasured phase. Stamp the boundary.
+
+## BUG-021 · L2 retrieval · chunk size was compared with context size varying
+**Cause.** The three settings were compared at fixed `k=4` while mean chunk length
+grew 570 → 845 → 1110 characters, so 1200/200 retrieved 4260 chars against 2254 for
+600/100. The "best setting" was substantially a "biggest context" result.
+**Fix.** `--char-budget` (default 3600, the 900/150 fixed-k mean) truncates retrieved
+hits to an equal character count and reports mean chars per answer so the cap is
+auditable.
+**Result.** 1200/200 falls from 55% to 45% recall at equal characters, below
+900/150's 50%. The committed setting survives; the ORIGINAL JUSTIFICATION for it
+("1200 leads on both recall and MRR, but by noise") was wrong in both directions.
+**Lesson.** When comparing two configurations, list every quantity that differs
+between them, not just the one named in the experiment title.
+
+## BUG-022 · probe · Q-06 reported a verdict from a negative measurement
+**Cause.** The TPM-drop test compared `remaining_tokens` between two responses and
+picked whichever of two candidate costs was closer. It was seen producing a verdict
+from a drop of **-50** — the bucket refilled between reads, so no consumption was
+measured at all. Both candidate costs were also built on a `len/3` estimate that gave
+88 tokens against 117 actual.
+**Fix.** Three conditions before any verdict: reads under 1 s apart, positive drop,
+a measured prompt overhead. Otherwise `INCONCLUSIVE (refill confound)` with the
+failing condition named. The estimate is replaced by the first real
+`usage.prompt_tokens`.
+**Lesson.** "Which of these two numbers is closer" is not a test when both are
+unvalidated and the measurement may be zero.

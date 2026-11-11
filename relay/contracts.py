@@ -56,8 +56,15 @@ class Attempt:
     #: Always <= t_first_token. Their gap is connection + model warm-up.
     t_first_delta: Optional[float] = None
     #: First byte of the VERIFIED answer reaching the user, i.e. after verification.
-    #: Always >= t_first_token. Their gap is what verification costs the user.
+    #: Always >= t_first_token.
     t_user_ttft: Optional[float] = None
+    #: The model finished generating. t_first_token -> t_generation_end is the time
+    #: spent GENERATING; t_generation_end -> t_user_ttft is the time spent
+    #: VERIFYING. Without this stamp the two were indistinguishable, and the whole
+    #: model_ttft->user_ttft gap was attributed to verification -- which is wrong,
+    #: because H1 means we cannot show anything until the draft is complete, so
+    #: generation is fully inside that gap (BUG-020).
+    t_generation_end: Optional[float] = None
     status: Optional[int] = None
     outcome: Optional[Outcome] = None
     retry_after_s: Optional[float] = None

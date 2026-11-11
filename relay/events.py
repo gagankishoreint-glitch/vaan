@@ -126,6 +126,7 @@ class RequestScope:
             t_first_token=attempt.t_first_token,
             t_first_delta=getattr(attempt, "t_first_delta", None),
             t_user_ttft=getattr(attempt, "t_user_ttft", None),
+            t_generation_end=getattr(attempt, "t_generation_end", None),
             t_end=attempt.t_end,
             status=attempt.status,
             outcome=None if attempt.outcome is None else attempt.outcome.value,

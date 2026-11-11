@@ -29,8 +29,37 @@ def load_questions(path: Path) -> list[dict]:
     return [json.loads(l) for l in open(path, encoding="utf-8") if l.strip()]
 
 
+def search_within_budget(retriever: Retriever, question: str, k: int,
+                         char_budget: int | None) -> list:
+    """Top-k hits, truncated to a character budget. Always returns at least one.
+
+    The confound this exists to remove: at a fixed k, a larger chunk size also means
+    a larger CONTEXT. k=4 retrieves ~2280 chars at 600/100, ~3380 at 900/150 and
+    ~4440 at 1200/200, so a chunking that "wins" may simply be feeding the model
+    more text. Comparing recall at equal k is not comparing chunkings, it is
+    comparing chunkings *and* context sizes at once.
+
+    With a budget, every setting sees the same number of characters and the only
+    thing that varies is how those characters are cut. One chunk is always kept,
+    even if it alone exceeds the budget: returning nothing would score an
+    impossible comparison, and the overshoot is reported instead of hidden.
+    """
+    hits = retriever.search(question, k=k)
+    if not char_budget:
+        return hits
+    kept, used = [], 0
+    for h in hits:
+        n = len(h.chunk.text)
+        if kept and used + n > char_budget:
+            break
+        kept.append(h)
+        used += n
+    return kept
+
+
 def evaluate(retriever: Retriever, questions: list[dict], k: int,
-             threshold: float, quotes: dict | None = None) -> dict:
+             threshold: float, quotes: dict | None = None,
+             char_budget: int | None = None) -> dict:
     """Score one setting.
 
     A HIT is: some retrieved chunk contains one of the gold quotes for this
@@ -44,8 +73,9 @@ def evaluate(retriever: Retriever, questions: list[dict], k: int,
     """
     rows = []
     for q in questions:
-        hits = retriever.search(q["question"], k=k)
+        hits = search_within_budget(retriever, q["question"], k, char_budget)
         got = [h.chunk.chunk_id for h in hits]
+        chars = sum(len(h.chunk.text) for h in hits)
         gold = q["gold"]
         id_rank = next((i for i, cid in enumerate(got) if cid in gold), None)
 
@@ -62,7 +92,7 @@ def evaluate(retriever: Retriever, questions: list[dict], k: int,
         rows.append({
             "qid": q["qid"], "type": q["type"], "gold": gold, "top": got[:k],
             "rank": rank, "id_rank": id_rank, "top_score": round(top, 3),
-            "gated_in": gated_in,
+            "gated_in": gated_in, "chars": chars,
         })
     answerable = [r for r in rows if r["gold"]]
     unanswerable = [r for r in rows if not r["gold"]]
@@ -81,6 +111,9 @@ def evaluate(retriever: Retriever, questions: list[dict], k: int,
         "false_abstain": len(fa) / max(1, len(answerable)),
         "false_answer": len(fb) / max(1, len(unanswerable)),
         "n_answerable": len(answerable), "n_unanswerable": len(unanswerable),
+        "char_budget": char_budget,
+        "chars_per_answer_mean": (sum(r["chars"] for r in rows) / len(rows)
+                                  if rows else 0.0),
     }
 
 
@@ -152,6 +185,12 @@ def main(argv=None) -> int:
     ap.add_argument("--sweep-setting", default=None,
                     help="setting to sweep, e.g. 900/150 (default: best)")
     ap.add_argument("--no-sweep", action="store_true")
+    ap.add_argument("--char-budget", type=int, default=3600,
+                    help="cap retrieved characters per question so settings are "
+                         "compared at equal context size. Default 3600 = the "
+                         "900/150 fixed-k mean, i.e. what the committed setting "
+                         "already retrieves, so no setting is advantaged. Pass 0 "
+                         "to use fixed k with no cap.")
     ap.add_argument("--gold-quotes", default="data/eval/gold_quotes.json",
                     help="quote-based evidence, comparable across chunkings")
     a = ap.parse_args(argv)
@@ -187,10 +226,32 @@ def main(argv=None) -> int:
         thr = scores[len(scores) // 4] if scores else 0.0
         res = evaluate(r, questions, a.k, thr, quotes)
         res.update(chunk_size=size, overlap=overlap, n_chunks=len(r.chunks))
+        # Equal-character variant: same budget for every setting, so a difference
+        # cannot be explained by context size.
+        res["equal_budget"] = evaluate(r, questions, a.k, thr, quotes,
+                                       char_budget=(a.char_budget or None))
         results.append(res)
         print(f"{s:>12} {res['recall_at_k']:>10.1%} {res['recall_at_k_by_id']:>9.1%} "
               f"{res['mrr']:>6.2f} {res['false_abstain']:>10.1%} "
               f"{res['false_answer']:>10.1%} {thr:>7.2f}")
+
+    # --- equal-character comparison: the chunking effect with context held fixed
+    if results and any(r.get("equal_budget") for r in results):
+        budget = a.char_budget
+        print(f"\nAt an EQUAL character budget ({budget} chars/question, k={a.k}):")
+        print(f"{'setting':>10} {'recall':>8} {'mrr':>6} {'thresh':>7} "
+              f"{'chars/ans (fixed k)':>20} {'chars/ans (budget)':>19}")
+        print("-" * 76)
+        for r in results:
+            eb = r["equal_budget"]
+            print(f"{r['chunk_size']:>4}/{r['overlap']:<5} "
+                  f"{eb['recall_at_k']:>8.1%} {eb['mrr']:>6.2f} "
+                  f"{eb['threshold']:>7.2f} "
+                  f"{r['chars_per_answer_mean']:>20.0f} "
+                  f"{eb['chars_per_answer_mean']:>19.0f}")
+        print("\nrecall/mrr at fixed k confounds chunk size with context size; "
+              "the budget columns\nshow what survives when every setting sees the "
+              "same number of characters.")
 
     # per-type recall at the best setting, for the report
     if results:

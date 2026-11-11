@@ -13,13 +13,26 @@ I cannot reach `console.groq.com` or `api.groq.com` from this environment, so:
 
 ## 1. Before the first real call
 
+### Credentials: `.env` is now actually read
+
+`scripts/probe.py` used to say "copy `.env.example` to `.env`" while reading only
+`os.environ`, so following that instruction changed nothing. `relay/env.py` now loads
+`.env` (working directory first, then the repo root) before anything is read.
+
 ```bash
+cp .env.example .env
+# edit .env: set GROQ_API_KEY and GROQ_BASE_URL
 python -m scripts.probe --dry-run --plan-today 60000     # always first
 ```
 
-Expect: `DRY RUN (no network)`, one line per planned request with `est≈N tokens`,
-and `ledger not written`. **If any line says REFUSED, read why before continuing** —
-that is the ceiling doing its job, not a bug.
+Existing environment variables win over `.env`, so `GROQ_API_KEY=... python -m
+scripts.probe` behaves as expected. `.env` is git-ignored.
+
+Expect: `DRY RUN (no network)`, one line per planned request naming the cap field
+(`max_completion_tokens=80 est≈88 tokens`), and `ledger not written`. **If any line
+says REFUSED, read why before continuing** — that is the ceiling doing its job, not a
+bug. A cap of 1 (the default when no plan is given) refuses everything, which is
+correct.
 
 ## 2. Order (supervisor's, which is also the cheap-to-expensive order)
 
@@ -76,6 +89,45 @@ tries them (`--reasoning-param`):
 for a field controlling reasoning/thinking depth, and its accepted values. **UNVERIFIED
 until then.** The probe records a 400 verbatim in `raw/reasoning_<v>_error.txt` rather
 than guessing again.
+
+## 4a. `--token-param`: Q-06 must use the field the gateway sends
+
+```
+--token-param {max_completion_tokens,max_tokens}    default: max_completion_tokens
+```
+
+The generation cap can be sent as either field. **The gateway sends
+`max_completion_tokens`**, so the probe defaults to it: Q-06 asks whether TPM is
+charged on the cap up front, and that answer depends on which field the service
+honours. Running Q-06 with `max_tokens` would describe a request shape the product
+never makes.
+
+Every planned line and every recorded `Result` logs `token_param` and the cap it
+sent, so the artifact says which field produced the number.
+
+**Q-06 must be re-confirmed with `max_completion_tokens`.** Any earlier Q-06 result
+was produced with `max_tokens` and is provisional for that reason alone, on top of
+the measurement problem below.
+
+### Q-06 will refuse to answer on a bad measurement
+
+The earlier Q-06 verdict was **invalid**. It compared the TPM `remaining_tokens`
+between two responses and picked whichever of two candidate costs was closer — and
+it was seen reporting a verdict from a drop of **-50**, which means the bucket
+refilled between the two reads and no consumption was measured at all. Both candidate
+costs were also built on a `len/3` token estimate (88 estimated against 117 actual).
+
+It now requires all three:
+
+1. the two reads are **under 1 s apart**;
+2. the drop is **positive** (a negative or zero drop means refill, not consumption);
+3. a **measured** prompt overhead exists, taken from the first real
+   `usage.prompt_tokens` rather than estimated.
+
+If any condition fails it prints `INCONCLUSIVE (refill confound)` and names the
+failing condition. **Treat `INCONCLUSIVE` as the expected outcome** unless the probe
+was able to read the header immediately around a single call — that is a property of
+how the service reports, not of how hard the probe tries.
 
 ## 5. `bigctx` is its own run
 

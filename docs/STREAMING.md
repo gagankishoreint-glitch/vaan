@@ -23,31 +23,44 @@ Ordering always holds: `first_delta ≤ model_ttft ≤ user_ttft`.
 - `first_delta → model_ttft` is connection setup plus the model's own warm-up.
 - `model_ttft → user_ttft` is **what verification costs the user**.
 
-Observed on the stand-in, 6 answered questions:
+Observed on the stand-in, streamed drafts, 4 answered questions:
 
-| req | first_delta | model_ttft | user_ttft | verification |
-|---|---|---|---|---|
-| A2 | 0.204 s | 0.215 s | 0.412 s | **0.197 s** |
-| A3 | 0.184 s | 0.196 s | 0.453 s | **0.257 s** |
-| A4 | 0.185 s | 0.197 s | 0.456 s | **0.259 s** |
-| A5 | 0.185 s | 0.196 s | 0.408 s | **0.211 s** |
-| M2 | 0.184 s | 0.196 s | 0.516 s | **0.320 s** |
-| H1 | 0.184 s | 0.196 s | 0.294 s | **0.099 s** |
+| req | model_ttft | generation_end | **generating** | **verifying** | user_ttft |
+|---|---|---|---|---|---|
+| A2 | 0.224 s | 0.420 s | **0.196 s** | **0.0006 s** | 0.421 s |
+| A3 | 0.196 s | 0.455 s | **0.259 s** | **0.0003 s** | 0.455 s |
+| A4 | 0.196 s | 0.454 s | **0.258 s** | **0.0004 s** | 0.454 s |
+| A5 | 0.196 s | 0.404 s | **0.208 s** | **0.0003 s** | 0.404 s |
 
-**Verification costs more than the model's time to first token.** The model produces
-its first content token 196–215 ms after the request; the verified answer is not ready
-until 294–516 ms. The user waits longer for us to check the answer than for the model
-to start writing it.
+### A correction: verification is ~0.3 ms, not 0.1–0.3 s
 
-This is the single most useful number P7 produced, and it is the argument for the
-degradation ladder existing at all: the cheapest latency win available is not a
-faster model, it is sending a verified-in-code answer sooner. (Which the pipeline
-already does — verification here is code checks only, no LLM verify call. With an
-LLM verify step enabled the gap would be larger still.)
+An earlier version of this document said *"verification costs 0.10–0.32 s, more
+than the model's TTFT"*. **That was wrong by roughly 300×.** It attributed the whole
+`model_ttft → user_ttft` gap to verification, but that gap also contains the rest of
+generation — and it must, because H1 forbids showing anything unverified, so the
+pipeline cannot observe the user-facing answer until the draft is complete.
 
-**UNCALIBRATED.** The stand-in's token rate is a provisional 90 tok/s. The *shape* of
-this result — verification dominating TTFT — is structural, because verification
-runs strictly after generation. The magnitudes are not provider measurements.
+With `generation_end` stamped, the gap splits:
+
+| phase | duration | share of user_ttft |
+|---|---|---|
+| first content token | 0.196–0.224 s | ~50% |
+| **generating the rest** | **0.196–0.259 s** | **~50%** |
+| **verifying (code only)** | **0.0003–0.0006 s** | **~0.1%** |
+
+The user waits about half their time for the model to start, and about half for the
+model to finish. Verification is free. So the latency lever is **generating fewer
+tokens or streaming a partial answer sooner**, not making the verifier faster.
+
+This also means the previous claim's *conclusion* was wrong even though the arithmetic
+was right: "verification is the argument for a degradation ladder" is a
+non-argument when verification is 0.3 ms. The real argument is that generation
+dominates and H1 forces the user to wait for all of it.
+
+**UNCALIBRATED.** The stand-in's 90 tok/s is an invented provisional value, so the
+*split* is structural (verification runs after generation, and is pure CPU on a few
+hundred characters) while the generation share is not a Groq measurement. Verification
+cost does not depend on the provider at all; generation time does entirely.
 
 ## Where `user_ttft` lives, and why it is a separate event
 

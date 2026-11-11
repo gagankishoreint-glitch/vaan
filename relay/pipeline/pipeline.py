@@ -130,6 +130,11 @@ class Pipeline:
             return
         now = self.gw.clock.now()
         att.t_user_ttft = now
+        # The gap first_token->user_ttft is TWO phases, not one. `gen_end` is when
+        # the model stopped producing; after that we verify. Reporting a single
+        # "verification" number would have charged the model's own generation time
+        # to our verifier (BUG-020).
+        gen_end = att.t_generation_end
         try:
             self.scope.emit(
                 "reply.ready", attempt_id=att.attempt_id, t_sent=att.t_sent,
@@ -137,9 +142,15 @@ class Pipeline:
                                else round(att.t_first_delta - att.t_sent, 4)),
                 model_ttft_s=(None if att.t_first_token is None
                               else round(att.t_first_token - att.t_sent, 4)),
+                generation_end_s=(None if gen_end is None
+                                  else round(gen_end - att.t_sent, 4)),
+                generating_s=(None if (att.t_first_token is None or gen_end is None)
+                              else round(gen_end - att.t_first_token, 4)),
+                verifying_s=(None if gen_end is None
+                             else round(now - gen_end, 4)),
                 user_ttft_s=round(now - att.t_sent, 4),
-                verify_cost_s=(None if att.t_first_token is None
-                               else round(now - att.t_first_token, 4)),
+                post_ttft_s=(None if gen_end is None
+                             else round(now - att.t_first_token, 4)),
                 reply=type(reply).__name__)
         except Exception:
             # Never let instrumentation break an answer that is ready to send.

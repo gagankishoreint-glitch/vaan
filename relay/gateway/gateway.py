@@ -284,7 +284,11 @@ class Gateway:
                 attempt.t_first_byte = st.first_delta
                 attempt.t_first_delta = st.first_delta
                 attempt.t_first_token = st.model_ttft
-                attempt.t_end = st.t_end or self.clock.now()
+                # Generation is over when the stream ends. The stamp is the END of
+                # the stream, not the last content frame, because the terminal
+                # [DONE]/usage frames are still part of the call.
+                attempt.t_generation_end = st.t_end or self.clock.now()
+                attempt.t_end = attempt.t_generation_end
                 attempt.status = 200
                 usage = st.usage or {}
                 attempt.tokens_in = usage.get("prompt_tokens")
