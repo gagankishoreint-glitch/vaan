@@ -26,7 +26,28 @@ from relay.ingest import (
 )
 
 PDFS = Path("data/papers")
-HAVE_PDFS = all((PDFS / m["file"]).is_file() for m in PAPERS.values())
+
+
+def _require_pdfs() -> None:
+    """Skip is not an option for these tests.
+
+    The PDFs are git-ignored, so a fresh clone has none of them. A `skipif` would
+    then quietly reduce the corpus tests to zero on exactly the machine least
+    likely to notice, and the suite would still report success. The corpus is the
+    input to the ingest, so its absence is a failure to set up, not a reason to
+    test nothing. The recovery is one command and is printed.
+    """
+    missing = [PDFS / m["file"] for m in PAPERS.values()
+               if not (PDFS / m["file"]).is_file()]
+    if missing:
+        pytest.fail(
+            "PDFs missing, so the corpus tests cannot run:\n  "
+            + "\n  ".join(str(m) for m in missing)
+            + "\n\nRestore the files named in data/papers/SHA256SUMS (committed), "
+              "then verify:\n    (cd data/papers && sha256sum -c SHA256SUMS)\n"
+              "See docs/P2_INGEST.md. These tests do not skip when the corpus is "
+              "absent.",
+            pytrace=False)
 
 
 def ln(text, size=10.0, bold=False):
@@ -268,8 +289,8 @@ def test_load_chunks_roundtrip(tmp_path):
 
 # ------------------------------------------------------- integration (real PDFs)
 
-@pytest.mark.skipif(not HAVE_PDFS, reason="PDFs not present")
 def test_real_pdfs_produce_sane_sections():
+    _require_pdfs()
     """Regression guard for the four bugs found by eyeballing real output:
     zero hnet chunks, author-name sections, moshi losing all sub-sections,
     and table rows becoming sections."""
@@ -284,8 +305,8 @@ def test_real_pdfs_produce_sane_sections():
         assert "http" not in titles, f"{paper}: URL leaked into a section"
 
 
-@pytest.mark.skipif(not HAVE_PDFS, reason="PDFs not present")
 def test_real_pdf_manifest_hashes_match_committed_sums():
+    _require_pdfs()
     sums = {}
     for line in (PDFS / "SHA256SUMS").read_text().splitlines():
         digest, name = line.split()
@@ -294,8 +315,8 @@ def test_real_pdf_manifest_hashes_match_committed_sums():
         assert sha256_of(PDFS / meta["file"]) == sums[meta["file"]]
 
 
-@pytest.mark.skipif(not HAVE_PDFS, reason="PDFs not present")
 def test_real_pdfs_have_no_duplicate_chunk_ids():
+    _require_pdfs()
     seen = set()
     for paper in PAPERS:
         recs, _, _ = ingest_paper(paper, PDFS, 900, 150)
@@ -304,8 +325,8 @@ def test_real_pdfs_have_no_duplicate_chunk_ids():
             seen.add(r.chunk_id)
 
 
-@pytest.mark.skipif(not HAVE_PDFS, reason="PDFs not present")
 def test_real_chunks_keep_verbatim_text():
+    _require_pdfs()
     """H2 depends on quotes matching chunk text exactly: no normalisation here."""
     recs, _, _ = ingest_paper("attention", PDFS, 900, 150)
     joined = "".join(r.chunk.text for r in recs)
@@ -339,8 +360,8 @@ def test_caption_lead_is_distinguished():
     assert "caption_lead" in recs[0].flags
 
 
-@pytest.mark.skipif(not HAVE_PDFS, reason="PDFs not present")
 def test_real_corpus_caption_rate_is_measured():
+    _require_pdfs()
     """Pin the measured rate so a chunking change that doubles it is visible."""
     recs, _, _ = ingest_paper("attention", PDFS, 900, 150)
     n_cap = sum(1 for r in recs if "caption" in r.flags)

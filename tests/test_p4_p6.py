@@ -1,6 +1,7 @@
 """One failure-path test per new mechanism. No more than that (compressed mode)."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
@@ -614,9 +615,22 @@ def test_streamed_and_buffered_pipelines_agree(index_900):
                                      api_key="x", client=c)
             return await Pipeline(cfg, r, gw, S(), stream=stream).answer(Q)
 
-    try:
-        buffered = asyncio.run(go(False))
+    # This is the ONLY skip left in the suite. It is justified because it needs a
+    # live HTTP server on 8009, which no unit test should start for itself, and
+    # because the behaviour under test (streamed == buffered) is ALSO covered
+    # hermetically by test_stream_timestamps_are_stamped_at_arrival_not_at_replay
+    # and test_verification_normalises_whitespace_between_draft_and_source. So a
+    # skip here costs no coverage, which is what makes it different from the
+    # corpus skips that were removed in BUG-019.
+    if os.environ.get("RELAY_REQUIRE_STANDIN") == "1":
+        buffered = asyncio.run(go(False))       # fail, never skip
         streamed = asyncio.run(go(True))
-    except Exception as e:                     # stand-in not running
-        pytest.skip(f"stand-in unavailable: {e}")
+    else:
+        try:
+            buffered = asyncio.run(go(False))
+            streamed = asyncio.run(go(True))
+        except Exception as e:
+            pytest.skip(f"stand-in not running on :8009 ({type(e).__name__}); "
+                        f"set RELAY_REQUIRE_STANDIN=1 to make this a failure. "
+                        f"Hermetic equivalents still ran.")
     assert buffered.terminal == streamed.terminal, (buffered.terminal, streamed.terminal)
