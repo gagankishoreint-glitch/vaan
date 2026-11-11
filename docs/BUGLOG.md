@@ -248,3 +248,26 @@ request would vanish from every report.
 **Fix.** Transport failures are caught and converted into a `PassagesOnly` reply.
 The user still gets an honest answer, and the log still has exactly one terminal.
 **Test.** The checker on a run with the stand-in down reports `violations=0`.
+
+## BUG-013 · L3 gateway · naive retry was recursive and crashed the process
+**Cause.** `_maybe_retry` called `self.call(...)` on failure. Against a persistent
+429 that never yields a 200, retry-after was ignored and the deadline was never
+checked, so the call chain grew until Python's stack died: **489 HTTP requests
+then `RecursionError`**.
+**Fix.** `call()` is a single bounded `for attempt_no in range(1, max_attempts+1)`
+loop. Policy lives in `_next_delay()`, a pure function returning either `None`
+(stop) or `(seconds, why)`. Naive: `naive_max_attempts=5`, fixed 0.2 s backoff,
+no local budget, no breaker, ignores retry-after — all from config.
+**Why it matters.** The old code made the *demonstration of harm* its own harm:
+the naive policy took the whole process down, which would have been reported as a
+gateway bug rather than as a policy result.
+**Test.** `test_naive_is_bounded_and_never_recurses` asserts exactly
+`naive_max_attempts` HTTP calls and no RecursionError.
+
+## BUG-014 · L4 stand-in · stale process read `max_tokens` as zero
+**Cause.** The gateway moved to `max_completion_tokens` while the running
+stand-in still read `max_tokens`. It got `None`, charged **1 token** per call, and
+so its 8000 TPM bucket never emptied. Managed vs naive came out *identical*.
+**Fix.** Stand-in reads `max_completion_tokens` with `max_tokens` as fallback.
+**Lesson.** A green comparison against a stale binary is indistinguishable from a
+null result. Both policies reported the same numbers; that was the tell.
