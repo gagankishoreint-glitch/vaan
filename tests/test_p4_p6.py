@@ -282,3 +282,80 @@ def test_every_question_has_an_author():
     assert rows and all(r.get("author") for r in rows)
     assert all(r["author"] in ("agent_draft", "me") for r in rows), \
         {r["author"] for r in rows}
+
+
+# ---------------------------------------------------------------- analyze
+
+def _write_log(tmp_path, events):
+    import json
+    p = tmp_path / "events.jsonl"
+    p.write_text("\n".join(json.dumps(e) for e in events) + "\n")
+    return p
+
+
+def _ev(t, **kw):
+    base = {"type": t, "run_id": "r", "backend": "standin", "t_mono": 1.0,
+            "t_wall": 1.0}
+    base.update(kw)
+    return base
+
+
+def test_analyze_names_a_missing_terminal(tmp_path):
+    from scripts.analyze import check
+    evs = [_ev("request.start", req_id="A"),
+           _ev("request.end", req_id="A", total_elapsed_s=0.1, waiting_s=0.0,
+               working_s=0.1, retrying_s=0.0)]
+    faults = check(evs)
+    assert any("I1" in f for f in faults), faults
+
+
+def test_analyze_names_a_broken_latency_sum(tmp_path):
+    from scripts.analyze import check
+    evs = [_ev("request.start", req_id="A"),
+           _ev("request.end", req_id="A", total_elapsed_s=9.0, waiting_s=0.0,
+               working_s=0.1, retrying_s=0.0),
+           _ev("terminal", req_id="A", terminal="answered",
+               reply_type="verified_answer")]
+    assert any("I7" in f for f in check(evs))
+
+
+def test_analyze_rejects_an_event_after_the_terminal():
+    from scripts.analyze import check
+    evs = [_ev("request.start", req_id="A"),
+           _ev("terminal", req_id="A", terminal="answered", reply_type="verified_answer"),
+           _ev("request.end", req_id="A", total_elapsed_s=0.0, waiting_s=0.0,
+               working_s=0.0, retrying_s=0.0)]
+    assert any("I2" in f for f in check(evs))
+
+
+def test_analyze_passes_a_clean_log(tmp_path):
+    from scripts.analyze import main
+    log = _write_log(tmp_path, [
+        _ev("request.start", req_id="A"),
+        _ev("attempt.start", req_id="A", attempt_id="A-1", step="draft",
+            attempt_backend="standin", t_sent=1.0),
+        _ev("attempt.end", req_id="A", attempt_id="A-1", step="draft",
+            attempt_backend="standin", t_sent=1.0, t_first_token=1.1, t_end=1.1,
+            status=200, outcome="ok", tokens_in=10, tokens_out=5),
+        _ev("request.end", req_id="A", total_elapsed_s=0.1, waiting_s=0.0,
+            working_s=0.1, retrying_s=0.0),
+        _ev("terminal", req_id="A", terminal="answered", reply_type="verified_answer"),
+    ])
+    assert main([str(tmp_path)]) == 0
+
+
+def test_analyze_does_not_report_a_fabricated_ttft(tmp_path, capsys):
+    """A non-streaming call has no observable TTFT; the table must say so rather
+    than print a number that is the total by construction."""
+    from scripts.analyze import main
+    _write_log(tmp_path, [
+        _ev("request.start", req_id="A"),
+        _ev("attempt.end", req_id="A", attempt_id="A-1", step="draft",
+            t_sent=1.0, t_first_token=1.1, t_end=1.1, status=200, outcome="ok"),
+        _ev("request.end", req_id="A", total_elapsed_s=0.1, waiting_s=0.0,
+            working_s=0.1, retrying_s=0.0),
+        _ev("terminal", req_id="A", terminal="answered", reply_type="verified_answer"),
+    ])
+    main([str(tmp_path)])
+    out = capsys.readouterr().out
+    assert "TTFT is not measured" in out
