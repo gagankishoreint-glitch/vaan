@@ -23,6 +23,7 @@ from relay.clock import Clock
 from relay.config import Config
 from relay.contracts import Attempt, Outcome
 from relay.events import EventLog, RequestScope
+from relay.gateway.stream import consume
 from relay.ratelimit_headers import parse_rl_headers
 
 
@@ -32,6 +33,15 @@ class DeadlineExceeded(Exception):
 
 class BreakerOpen(Exception):
     pass
+
+
+class _StreamHTTPError(Exception):
+    """A non-200 arriving on a streamed request. Carries the body for the log."""
+
+    def __init__(self, status: int, text: str):
+        super().__init__(f"stream failed with {status}")
+        self.status = status
+        self.text = text
 
 
 @dataclass
@@ -137,6 +147,9 @@ class Gateway:
     client: httpx.AsyncClient
     policy: str = "managed"
     retry_budget_ratio: float = 0.1
+    #: The Attempt most recently created. Read-only convenience for callers that
+    #: need to stamp a later moment (user_ttft) onto the same event.
+    _last_attempt: Optional[Attempt] = None
     #: Hard cap on HTTP attempts per logical call, for the MANAGED policy.
     max_attempts: int = 3
     max_tokens_map: dict = field(default_factory=dict)
@@ -170,7 +183,8 @@ class Gateway:
     REASONING_EFFORT_PARAMS = ("reasoning_effort",)
 
     def request_payload(self, *, model: str, messages: list[dict], max_tokens: int,
-                        reasoning_effort: Optional[str] = None) -> dict:
+                        reasoning_effort: Optional[str] = None,
+                        stream: bool = False) -> dict:
         """Build the JSON body for one attempt.
 
         `max_completion_tokens` is what we send. It is the current OpenAI-compatible
@@ -183,7 +197,11 @@ class Gateway:
         is the value we have no evidence for.
         """
         body: dict = {"model": model, "messages": messages,
-                      "max_completion_tokens": max_tokens, "stream": False}
+                      "max_completion_tokens": max_tokens, "stream": stream}
+        if stream:
+            # Without this the provider may omit usage on a streamed response, and
+            # the token accounting silently becomes "unmeasured".
+            body["stream_options"] = {"include_usage": True}
         if reasoning_effort is not None:
             if "gpt-oss" not in model:
                 # Not an error: callers pass one config value for all models.
@@ -236,10 +254,47 @@ class Gateway:
                 attempt_id, scope.req_id, step,
                 "standin" if "8009" in self.base_url else "groq",
                 model, t_sent=t_attempt)
+            self._last_attempt = attempt
             scope.attempt_start(attempt)
             payload = self.request_payload(
                 model=model, messages=messages, max_tokens=max_tokens,
-                reasoning_effort=reasoning_effort)
+                reasoning_effort=reasoning_effort, stream=stream)
+            st = None
+            if stream:
+                # A streamed attempt times out on FIRST CONTENT, not on the whole
+                # body: a request that has started answering is not late.
+                try:
+                    st = await self._streamed_call(payload, t_attempt, deadline_s,
+                                                   t_start)
+                except asyncio.TimeoutError:
+                    attempt.outcome = Outcome.TIMEOUT
+                    attempt.t_end = self.clock.now()
+                    scope.attempt_end(attempt)
+                    if managed:
+                        self.breaker.record(False, attempt.t_end)
+                    raise DeadlineExceeded("no content before the deadline") from None
+                except asyncio.CancelledError:
+                    attempt.outcome = Outcome.CANCELLED
+                    attempt.t_end = self.clock.now()
+                    scope.attempt_end(attempt)
+                    raise
+                # Rebuild a non-streaming body so every caller sees one shape.
+                body = {"choices": [{"message": {"content": st.text}}],
+                        "usage": st.usage or {}}
+                attempt.t_first_byte = st.first_delta
+                attempt.t_first_delta = st.first_delta
+                attempt.t_first_token = st.model_ttft
+                attempt.t_end = st.t_end or self.clock.now()
+                attempt.status = 200
+                usage = st.usage or {}
+                attempt.tokens_in = usage.get("prompt_tokens")
+                attempt.tokens_out = usage.get("completion_tokens")
+                attempt.outcome = Outcome.OK
+                scope.attempt_end(attempt)
+                if managed:
+                    self.breaker.record(True, attempt.t_end)
+                return body
+
             try:
                 resp = await asyncio.wait_for(
                     self.client.post("/chat/completions", json=payload),
@@ -311,6 +366,26 @@ class Gateway:
                 await self.clock.sleep(wait)   # slot released while sleeping
 
         raise DeadlineExceeded(f"{last_error} (gave up after {max_attempts} attempts)")
+
+    async def _streamed_call(self, payload: dict, t_attempt: float,
+                             deadline_s: float, t_start: float):
+        """Open the SSE stream and stamp the three timings as frames arrive.
+
+        Times out on FIRST CONTENT, not on the whole body: a request that has begun
+        answering is not late. The role-only frame is a real frame and is stamped as
+        `first_delta`, but it is not a first token.
+        """
+        async def lines():
+            async with self.client.stream("POST", "/chat/completions",
+                                          json=payload) as resp:
+                if resp.status_code != 200:
+                    await resp.aread()
+                    raise _StreamHTTPError(resp.status_code, resp.text)
+                async for line in resp.aiter_lines():
+                    yield line
+
+        return await consume(lines(), self.clock, t_attempt,
+                             deadline_at=t_start + deadline_s)
 
     def _next_delay(self, attempt, t_start: float, deadline_s: float,
                     attempt_no: int, max_attempts: int,

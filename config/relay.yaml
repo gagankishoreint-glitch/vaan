@@ -32,6 +32,10 @@ slo:
 
 pipeline:
   max_loops: 1
+  # Stream the draft so model_ttft (first CONTENT delta) is observable. The
+  # pipeline still buffers and verifies before sending, so this does not reduce
+  # user-visible latency yet -- it makes the timing measurable.
+  stream: false
   max_redrafts: 1
   top_k: 4
   max_tokens: {rewrite: 80, draft: 400, verify: 120}

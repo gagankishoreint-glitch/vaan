@@ -55,7 +55,8 @@ async def main_async(a) -> int:
             scope = log.request(q["qid"])
             t0 = clock.now()
             scope.emit("request.start", question=q["question"][:200])
-            pipe = Pipeline(cfg, r, gw, scope, patience_s=a.patience)
+            pipe = Pipeline(cfg, r, gw, scope, patience_s=a.patience,
+                            stream=a.stream)
             try:
                 out = await pipe.answer(q["question"])
             except (httpx.HTTPError, OSError) as e:
@@ -107,6 +108,8 @@ def main(argv=None) -> int:
     ap.add_argument("--chunks", default="data/chunks/exp900/chunks.jsonl")
     ap.add_argument("--questions", default="data/eval/questions.jsonl")
     ap.add_argument("--limit", type=int, default=8)
+    ap.add_argument("--stream", action="store_true",
+                    help="stream drafts so first_delta and model_ttft are observable")
     ap.add_argument("--patience", type=float, default=None,
                     help="seconds before the user abandons; expiry cancels the "
                          "draft and stops token spend (H4). Default from "

@@ -50,8 +50,14 @@ class Attempt:
     model: str
     t_sent: float
     t_first_byte: Optional[float] = None
-    t_first_token: Optional[float] = None
+    t_first_token: Optional[float] = None      # == model_ttft (first CONTENT delta)
     t_end: Optional[float] = None
+    #: First SSE frame of any kind, including a role-only frame with no content.
+    #: Always <= t_first_token. Their gap is connection + model warm-up.
+    t_first_delta: Optional[float] = None
+    #: First byte of the VERIFIED answer reaching the user, i.e. after verification.
+    #: Always >= t_first_token. Their gap is what verification costs the user.
+    t_user_ttft: Optional[float] = None
     status: Optional[int] = None
     outcome: Optional[Outcome] = None
     retry_after_s: Optional[float] = None

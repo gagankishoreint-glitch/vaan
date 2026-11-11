@@ -8,7 +8,13 @@ python -m scripts.run_queries --limit 8 --patience 0.05 --run-dir runs/h4_abando
 python scripts/check_events.py runs/h4_abandon/events.jsonl
 python -m scripts.analyze runs/h4_abandon --request A2
 ```
-Observed: 5 of 8 abandoned at exactly 0.05 s, `violations=0`.
+Observed: 5 of 8 abandoned, **every one at 0.050 s of a 0.05 s patience budget**
+(recorded totals: 0.0523–0.0530 s), `violations=0`.
+
+> **The patience used was 50 ms, not 5 ms.** Earlier prose in this project said
+> "5 ms"; the event log says otherwise and the event log is the source. The
+> `request.abandoned` reason now records the value (`patience_0.05s`) so this
+> cannot be misread again.
 
 ## What happens on abandonment
 
@@ -42,30 +48,37 @@ Three details that are deliberate:
 3. **No retry.** A cancelled attempt must not consume retry credit; the user's
    departure is not the provider's fault.
 
-## The measured limit: cancellation does not refund tokens
+## What cancellation does, and the one thing this measurement cannot tell you
 
 Against the stand-in, 10 identical calls with two patience settings:
 
-| patience | completed | admitted by provider | day tokens charged |
+| patience | completed | admitted by provider | tokens debited |
 |---|---|---|---|
 | 5.0 s | 10 | 10 | **2000** |
 | 0.05 s | **0** | 10 | **2000** |
 
-**Cancelling stops the wait and stops all further work on that request, but the
-tokens already reserved are still spent.** Zero calls completed and the token bill
-was identical.
+Zero calls completed, identical token figure.
 
-This is the honest statement of H4:
+> **This is a property of the stand-in's debit-at-admission design, and is
+> UNVERIFIED for Groq.**
+>
+> `relay/standin/server.py` charges its token buckets the moment a call is
+> *accepted*, before any generation happens (which mirrors the reserve-up-front
+> hypothesis, Q-06 — itself unverified). Under that design the token count is
+> decided at admission, so of course cancellation cannot change it. The experiment
+> is therefore measuring the stand-in's accounting model, not a fact about the
+> provider. A service that bills on tokens actually generated would show a
+> different number, and we have no observation either way.
+>
+> **Do not put "abandonment does not save tokens" in the report as a finding.** The
+> reportable statement is that the cost of an abandoned request is
+> **unmeasured** — P1 observes `usage` on a completed call but cannot observe the
+> usage of one we cancelled mid-flight without spending real tokens to find out.
 
-> Abandonment stops the client waiting and prevents any further work being
-> scheduled for that request. It does **not** reduce the tokens already committed
-> at the provider for the in-flight call. Under a reserved-up-front TPM model
-> (UNVERIFIED, Q-06), an abandoned request costs the same as a completed one.
-
-The consequence for the budget is direct: **user abandonment does not save tokens.**
-Only *not sending the request* saves tokens. That is why the gate and the retry
-budget matter more than the abandonment path for cost control, and why the
-degradation ladder would need to act *before* the call, not after the user leaves.
+What *is* established, from the log rather than from accounting: cancellation
+stops the client waiting (0.05 s instead of 0.18 s), stops any retry (no retry
+credit spent), and leaves `attempt.outcome = cancelled` with `status = null`. The
+request is over; whether the provider still bills for it is open.
 
 ## Failure-path tests (the one per mechanism rule)
 

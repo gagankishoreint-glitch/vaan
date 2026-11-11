@@ -299,3 +299,30 @@ terminal is `abandoned`, and a violation otherwise ("sent nothing but was not
 abandoned"). A *missing* key still falls back, so older logs keep checking.
 **Lesson.** `or` is the same hazard as BUG-003/015: it silently treats "absent" as
 a value. An explicit null and an absent key must not be conflated.
+
+## BUG-017 · L3 gateway · stream timestamps stamped at replay, not arrival
+**Cause.** Frames were buffered until the first content frame arrived, then replayed
+through the consumer, which stamped `first_delta` and `model_ttft` as it read them.
+Both landed microseconds apart, destroying the distinction the two fields exist to
+make — and the role-only frame's true arrival time was lost entirely.
+**Fix.** `consume()` stamps each frame as it arrives. The role-only frame sets
+`first_delta`; the first non-empty content delta sets `model_ttft`.
+Observed separation after the fix: 184 ms vs 196 ms.
+**Test.** `test_stream_timestamps_are_stamped_at_arrival_not_at_replay`.
+
+## BUG-018 · L4 pipeline · quote verification bypassed normalisation, discarding correct answers
+**Cause.** The citation-building loop tested `sentence in chunk.text` on raw text.
+A streamed draft joins words with spaces where the PDF chunk has a newline (SSE
+deltas are word-shaped; the newline between two PDF lines belongs to no delta).
+The raw test failed, `citations` came out empty, and the reply became
+`passages_only / no citations` — **a correct answer discarded as unverifiable**.
+**Effect.** Streaming answered 1/12 where buffering answered 6/12 on identical
+questions. Reproducible, deterministic.
+**Fix.** Route the test through `contains_quote`, the same NFKC + de-hyphenation
+normalisation the verifier has used since BUG-006.
+**Why it hid for two phases.** A buffered draft happened to reproduce the source's
+newline exactly, so draft and chunk matched byte for byte. The stand-in was
+accidentally perfectly aligned. Any real model that wraps a line would have
+triggered it.
+**Test.** `test_verification_normalises_whitespace_between_draft_and_source`,
+`test_streamed_and_buffered_pipelines_agree`.

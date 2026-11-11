@@ -16,6 +16,7 @@
           "attn-v7:s7:c0017"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 16.462,
         "gated_in": true
       },
@@ -32,6 +33,7 @@
           "attn-v7:s6.2:c0000"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 46.357,
         "gated_in": true
       },
@@ -47,7 +49,8 @@
           "attn-v7:s6.3:c0001",
           "moshi-v1:s7:c0067"
         ],
-        "rank": 1,
+        "rank": null,
+        "id_rank": 1,
         "top_score": 18.44,
         "gated_in": true
       },
@@ -63,7 +66,8 @@
           "moshi-v1:s7:c0121",
           "hnet-v2:s2.2:c0004"
         ],
-        "rank": 1,
+        "rank": 0,
+        "id_rank": 1,
         "top_score": 21.017,
         "gated_in": true
       },
@@ -80,6 +84,7 @@
           "attn-v7:s3.2.2:c0002"
         ],
         "rank": 1,
+        "id_rank": 1,
         "top_score": 27.994,
         "gated_in": true
       },
@@ -96,6 +101,7 @@
           "attn-v7:s6.1:c0001"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 45.851,
         "gated_in": true
       },
@@ -112,6 +118,7 @@
           "moshi-v1:s3.2.2:c0003"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 11.937,
         "gated_in": false
       },
@@ -128,6 +135,7 @@
           "hnet-v2:s5:c0101"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 15.412,
         "gated_in": false
       },
@@ -144,6 +152,7 @@
           "moshi-v1:s5.1:c0008"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 15.477,
         "gated_in": false
       },
@@ -161,6 +170,7 @@
           "moshi-v1:s5.3:c0007"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 17.947,
         "gated_in": true
       },
@@ -177,6 +187,7 @@
           "moshi-v1:ss0:c0003"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 15.419,
         "gated_in": false
       },
@@ -194,6 +205,7 @@
           "moshi-v1:s7:c0112"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 17.662,
         "gated_in": true
       },
@@ -211,6 +223,7 @@
           "hnet-v2:s3.2:c0004"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 21.806,
         "gated_in": true
       },
@@ -227,7 +240,8 @@
           "hnet-v2:s2.1:c0000",
           "attn-v7:s3.1:c0000"
         ],
-        "rank": 2,
+        "rank": 3,
+        "id_rank": 2,
         "top_score": 32.428,
         "gated_in": true
       },
@@ -244,6 +258,7 @@
           "moshi-v1:s5.5:c0006"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 17.051,
         "gated_in": true
       },
@@ -261,6 +276,7 @@
           "moshi-v1:s4.4:c0005"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 15.366,
         "gated_in": false
       },
@@ -277,6 +293,7 @@
           "attn-v7:s3.2.3:c0001"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 22.043,
         "gated_in": true
       },
@@ -292,7 +309,8 @@
           "attn-v7:s6.1:c0001",
           "attn-v7:s6.1:c0002"
         ],
-        "rank": 1,
+        "rank": 2,
+        "id_rank": 1,
         "top_score": 32.91,
         "gated_in": true
       },
@@ -309,6 +327,7 @@
           "attn-v7:s5.2:c0000"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 11.564,
         "gated_in": false
       },
@@ -324,7 +343,8 @@
           "hnet-v2:s5:c0106",
           "attn-v7:s3.5:c0001"
         ],
-        "rank": null,
+        "rank": 0,
+        "id_rank": null,
         "top_score": 19.425,
         "gated_in": true
       },
@@ -339,6 +359,7 @@
           "moshi-v1:s5.5:c0006"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 8.769,
         "gated_in": false
       },
@@ -353,6 +374,7 @@
           "moshi-v1:s2:c0018"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 12.156,
         "gated_in": false
       },
@@ -367,6 +389,7 @@
           "moshi-v1:s5.8:c0002"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 9.538,
         "gated_in": false
       },
@@ -381,6 +404,7 @@
           "moshi-v1:s3.4.1:c0002"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 13.531,
         "gated_in": false
       },
@@ -395,6 +419,7 @@
           "moshi-v1:s6:c0000"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 14.626,
         "gated_in": false
       },
@@ -409,6 +434,7 @@
           "moshi-v1:s4.4:c0011"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 12.817,
         "gated_in": false
       },
@@ -423,12 +449,14 @@
           "moshi-v1:s6.2:c0007"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 12.463,
         "gated_in": false
       }
     ],
     "recall_at_k": 0.4,
-    "mrr": 0.26666666666666666,
+    "recall_at_k_by_id": 0.4,
+    "mrr": 0.30416666666666664,
     "false_abstain": 0.3,
     "false_answer": 0.0,
     "n_answerable": 20,
@@ -454,6 +482,7 @@
           "hnet-v2:s5:c0060"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 15.467,
         "gated_in": false
       },
@@ -470,6 +499,7 @@
           "attn-v7:ss0:c0000"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 47.734,
         "gated_in": true
       },
@@ -486,6 +516,7 @@
           "hnet-v2:s3.2:c0005"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 20.961,
         "gated_in": true
       },
@@ -502,6 +533,7 @@
           "moshi-v1:s7:c0079"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 19.27,
         "gated_in": true
       },
@@ -518,6 +550,7 @@
           "hnet-v2:s5:c0060"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 29.023,
         "gated_in": true
       },
@@ -534,6 +567,7 @@
           "attn-v7:s5.1:c0000"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 48.748,
         "gated_in": true
       },
@@ -550,6 +584,7 @@
           "attn-v7:s5.3:c0000"
         ],
         "rank": 3,
+        "id_rank": 3,
         "top_score": 12.405,
         "gated_in": false
       },
@@ -566,6 +601,7 @@
           "hnet-v2:s5:c0066"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 15.86,
         "gated_in": false
       },
@@ -582,6 +618,7 @@
           "moshi-v1:s6.2:c0004"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 13.303,
         "gated_in": false
       },
@@ -599,6 +636,7 @@
           "moshi-v1:s5.3:c0005"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 18.493,
         "gated_in": true
       },
@@ -615,6 +653,7 @@
           "moshi-v1:s3.1:c0000"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 14.82,
         "gated_in": false
       },
@@ -632,6 +671,7 @@
           "hnet-v2:s1:c0004"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 15.93,
         "gated_in": true
       },
@@ -649,6 +689,7 @@
           "hnet-v2:s3.2:c0000"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 20.521,
         "gated_in": true
       },
@@ -666,6 +707,7 @@
           "moshi-v1:s5.4:c0005"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 34.603,
         "gated_in": true
       },
@@ -682,6 +724,7 @@
           "moshi-v1:s6:c0000"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 17.47,
         "gated_in": true
       },
@@ -699,6 +742,7 @@
           "moshi-v1:s5.5:c0004"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 16.269,
         "gated_in": true
       },
@@ -715,6 +759,7 @@
           "attn-v7:s5.4:c0001"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 22.296,
         "gated_in": true
       },
@@ -730,7 +775,8 @@
           "attn-v7:s6.1:c0000",
           "moshi-v1:s6.2:c0002"
         ],
-        "rank": 2,
+        "rank": 1,
+        "id_rank": 2,
         "top_score": 33.787,
         "gated_in": true
       },
@@ -747,6 +793,7 @@
           "moshi-v1:s7:c0080"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 14.845,
         "gated_in": false
       },
@@ -763,6 +810,7 @@
           "hnet-v2:s5:c0070"
         ],
         "rank": 1,
+        "id_rank": 1,
         "top_score": 19.365,
         "gated_in": true
       },
@@ -777,6 +825,7 @@
           "moshi-v1:s5.5:c0004"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 8.817,
         "gated_in": false
       },
@@ -791,6 +840,7 @@
           "moshi-v1:s2:c0012"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 11.774,
         "gated_in": false
       },
@@ -805,6 +855,7 @@
           "moshi-v1:s3.4.4:c0003"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 14.499,
         "gated_in": false
       },
@@ -819,6 +870,7 @@
           "moshi-v1:s6.2:c0002"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 17.276,
         "gated_in": true
       },
@@ -833,6 +885,7 @@
           "moshi-v1:s5.8:c0003"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 14.264,
         "gated_in": false
       },
@@ -847,6 +900,7 @@
           "moshi-v1:s7:c0080"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 12.478,
         "gated_in": false
       },
@@ -861,12 +915,14 @@
           "hnet-v2:s3.2:c0007"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 12.923,
         "gated_in": false
       }
     ],
     "recall_at_k": 0.5,
-    "mrr": 0.4041666666666666,
+    "recall_at_k_by_id": 0.5,
+    "mrr": 0.4125,
     "false_abstain": 0.3,
     "false_answer": 0.14285714285714285,
     "n_answerable": 20,
@@ -892,6 +948,7 @@
           "attn-v7:s4:c0002"
         ],
         "rank": 2,
+        "id_rank": 2,
         "top_score": 16.595,
         "gated_in": true
       },
@@ -908,6 +965,7 @@
           "attn-v7:ss0:c0000"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 48.273,
         "gated_in": true
       },
@@ -924,6 +982,7 @@
           "attn-v7:s6.3:c0000"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 19.857,
         "gated_in": true
       },
@@ -940,6 +999,7 @@
           "hnet-v2:s2.2:c0002"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 20.516,
         "gated_in": true
       },
@@ -955,7 +1015,8 @@
           "attn-v7:s3.2.2:c0001",
           "attn-v7:s2:c0000"
         ],
-        "rank": 2,
+        "rank": 0,
+        "id_rank": 2,
         "top_score": 28.448,
         "gated_in": true
       },
@@ -972,6 +1033,7 @@
           "attn-v7:s5.1:c0000"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 46.505,
         "gated_in": true
       },
@@ -988,6 +1050,7 @@
           "attn-v7:s5.3:c0000"
         ],
         "rank": 3,
+        "id_rank": 3,
         "top_score": 14.037,
         "gated_in": false
       },
@@ -1004,6 +1067,7 @@
           "hnet-v2:s3.3:c0007"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 15.916,
         "gated_in": true
       },
@@ -1020,6 +1084,7 @@
           "moshi-v1:s3.3.1:c0003"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 12.144,
         "gated_in": false
       },
@@ -1037,6 +1102,7 @@
           "moshi-v1:s5.4:c0004"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 17.778,
         "gated_in": true
       },
@@ -1053,6 +1119,7 @@
           "moshi-v1:s5.6:c0000"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 15.125,
         "gated_in": false
       },
@@ -1070,6 +1137,7 @@
           "hnet-v2:s2.2:c0000"
         ],
         "rank": 3,
+        "id_rank": 3,
         "top_score": 14.536,
         "gated_in": false
       },
@@ -1087,6 +1155,7 @@
           "hnet-v2:s3.2:c0002"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 20.519,
         "gated_in": true
       },
@@ -1104,6 +1173,7 @@
           "attn-v7:s3.2.3:c0000"
         ],
         "rank": 1,
+        "id_rank": 1,
         "top_score": 36.377,
         "gated_in": true
       },
@@ -1120,6 +1190,7 @@
           "moshi-v1:s6:c0000"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 16.728,
         "gated_in": true
       },
@@ -1137,6 +1208,7 @@
           "moshi-v1:s5.5:c0003"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 15.876,
         "gated_in": true
       },
@@ -1153,6 +1225,7 @@
           "hnet-v2:s3.3:c0008"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 22.022,
         "gated_in": true
       },
@@ -1169,6 +1242,7 @@
           "moshi-v1:s6.2:c0001"
         ],
         "rank": 0,
+        "id_rank": 0,
         "top_score": 37.305,
         "gated_in": true
       },
@@ -1185,6 +1259,7 @@
           "moshi-v1:s7:c0060"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 15.007,
         "gated_in": false
       },
@@ -1200,7 +1275,8 @@
           "moshi-v1:s3.3.1:c0002",
           "attn-v7:s3.5:c0000"
         ],
-        "rank": null,
+        "rank": 0,
+        "id_rank": null,
         "top_score": 17.621,
         "gated_in": true
       },
@@ -1215,6 +1291,7 @@
           "moshi-v1:s5.5:c0003"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 8.837,
         "gated_in": false
       },
@@ -1229,6 +1306,7 @@
           "moshi-v1:s6.2:c0003"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 11.292,
         "gated_in": false
       },
@@ -1243,6 +1321,7 @@
           "moshi-v1:s5.6:c0001"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 13.792,
         "gated_in": false
       },
@@ -1257,6 +1336,7 @@
           "attn-v7:s5.4:c0000"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 18.602,
         "gated_in": true
       },
@@ -1271,6 +1351,7 @@
           "moshi-v1:s5.8:c0002"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 12.915,
         "gated_in": false
       },
@@ -1285,6 +1366,7 @@
           "moshi-v1:s4.4:c0001"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 12.254,
         "gated_in": false
       },
@@ -1299,12 +1381,14 @@
           "hnet-v2:s1:c0007"
         ],
         "rank": null,
+        "id_rank": null,
         "top_score": 12.616,
         "gated_in": false
       }
     ],
-    "recall_at_k": 0.5,
-    "mrr": 0.3333333333333333,
+    "recall_at_k": 0.55,
+    "recall_at_k_by_id": 0.5,
+    "mrr": 0.41666666666666663,
     "false_abstain": 0.25,
     "false_answer": 0.14285714285714285,
     "n_answerable": 20,

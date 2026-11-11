@@ -20,6 +20,7 @@ from pathlib import Path
 
 from relay.config import load_config
 from relay.retrieval.bm25 import Retriever
+from relay.retrieval.text import contains_quote
 
 SETTINGS = [(600, 100), (900, 150), (1200, 200)]
 
@@ -29,22 +30,44 @@ def load_questions(path: Path) -> list[dict]:
 
 
 def evaluate(retriever: Retriever, questions: list[dict], k: int,
-             threshold: float) -> dict:
+             threshold: float, quotes: dict | None = None) -> dict:
+    """Score one setting.
+
+    A HIT is: some retrieved chunk contains one of the gold quotes for this
+    question. Chunk ids are NOT comparable across chunkings -- the same passage has
+    a different id at 600/100 and 1200/200, and two 900-index gold ids do not exist
+    in the 1200 index at all, which silently scored those questions as misses by
+    construction. The quote is the evidence, so the quote decides the hit.
+
+    `id_rank` is still computed, purely so the difference between the two
+    definitions stays visible in the output.
+    """
     rows = []
     for q in questions:
         hits = retriever.search(q["question"], k=k)
         got = [h.chunk.chunk_id for h in hits]
         gold = q["gold"]
-        rank = next((i for i, cid in enumerate(got) if cid in gold), None)
+        id_rank = next((i for i, cid in enumerate(got) if cid in gold), None)
+
+        gq = (quotes or {}).get(q["qid"], {}).get("quotes", [])
+        wanted = [x["quote"] for x in gq if x.get("quote")]
+        rank = None
+        if wanted:
+            for i, h in enumerate(hits):
+                if any(contains_quote(h.chunk.text, wq) for wq in wanted):
+                    rank = i
+                    break
         top = hits[0].score if hits else 0.0
         gated_in = top >= threshold
         rows.append({
             "qid": q["qid"], "type": q["type"], "gold": gold, "top": got[:k],
-            "rank": rank, "top_score": round(top, 3), "gated_in": gated_in,
+            "rank": rank, "id_rank": id_rank, "top_score": round(top, 3),
+            "gated_in": gated_in,
         })
     answerable = [r for r in rows if r["gold"]]
     unanswerable = [r for r in rows if not r["gold"]]
     hit = [r for r in answerable if r["rank"] is not None]
+    id_hit = [r for r in answerable if r["id_rank"] is not None]
     mrr = sum(1 / (r["rank"] + 1) for r in hit) / max(1, len(answerable))
     # false abstain: answerable question the gate would refuse
     fa = [r for r in answerable if not r["gated_in"]]
@@ -53,6 +76,7 @@ def evaluate(retriever: Retriever, questions: list[dict], k: int,
     return {
         "k": k, "threshold": threshold, "rows": rows,
         "recall_at_k": len(hit) / max(1, len(answerable)),
+        "recall_at_k_by_id": len(id_hit) / max(1, len(answerable)),
         "mrr": mrr,
         "false_abstain": len(fa) / max(1, len(answerable)),
         "false_answer": len(fb) / max(1, len(unanswerable)),
@@ -74,14 +98,22 @@ def sweep(retriever: Retriever, questions: list[dict], k: int,
     for q in questions:
         hits = retriever.search(q["question"], k=k)
         top = hits[0].score if hits else 0.0
-        rows.append({"answerable": bool(q["gold"]), "score": top})
+        rows.append({"answerable": bool(q["gold"]), "score": top,
+                     "type": q["type"], "qid": q["qid"]})
 
     ans = [r["score"] for r in rows if r["answerable"]]
-    una = [r["score"] for r in rows if not r["answerable"]]
-    n_a, n_u = len(ans), len(una)
+    # The no-gold pool is NOT homogeneous and must not be reported as one number.
+    #   ambiguous (T): several defensible answers exist. A high score is CORRECT.
+    #   unanswerable (U): nothing in the corpus answers it. A high score is a fault.
+    # Folding T into "false answers" scores correct behaviour as a retrieval error.
+    amb = [r["score"] for r in rows if not r["answerable"] and r["type"] == "ambiguous"]
+    una = [r["score"] for r in rows if not r["answerable"] and r["type"] != "ambiguous"]
+    n_a, n_u, n_amb = len(ans), len(una), len(amb)
 
     # Candidate thresholds: every distinct score, so no operating point is missed.
-    cands = sorted({round(s, 6) for s in ans + una})
+    # Ambiguous scores are included as candidates because a threshold can fall
+    # between them too; they just never count toward `total_errors`.
+    cands = sorted({round(s, 6) for s in ans + una + amb})
     if not cands:
         return {"points": [], "n_answerable": n_a, "n_unanswerable": n_u}
     # Keep the cost bounded while still covering the whole range uniformly.
@@ -93,17 +125,21 @@ def sweep(retriever: Retriever, questions: list[dict], k: int,
     for t in cands:
         fa = sum(1 for s in ans if s < t)       # answerable refused
         fb = sum(1 for s in una if s >= t)      # unanswerable admitted
+        amb_in = sum(1 for s in amb if s >= t)  # ambiguous admitted (not an error)
         points.append({
             "threshold": round(t, 3),
             "false_abstain": fa, "n_answerable": n_a,
             "false_abstain_frac": fa / n_a if n_a else 0.0,
             "false_answer": fb, "n_unanswerable": n_u,
             "false_answer_frac": fb / n_u if n_u else 0.0,
+            "ambiguous_admitted": amb_in, "n_ambiguous": n_amb,
             "total_errors": fa + fb,
         })
     return {"points": points, "n_answerable": n_a, "n_unanswerable": n_u,
+            "n_ambiguous": n_amb,
             "answerable_scores": sorted(round(x, 3) for x in ans),
-            "unanswerable_scores": sorted(round(x, 3) for x in una)}
+            "unanswerable_scores": sorted(round(x, 3) for x in una),
+            "ambiguous_scores": sorted(round(x, 3) for x in amb)}
 
 
 def main(argv=None) -> int:
@@ -116,15 +152,22 @@ def main(argv=None) -> int:
     ap.add_argument("--sweep-setting", default=None,
                     help="setting to sweep, e.g. 900/150 (default: best)")
     ap.add_argument("--no-sweep", action="store_true")
+    ap.add_argument("--gold-quotes", default="data/eval/gold_quotes.json",
+                    help="quote-based evidence, comparable across chunkings")
     a = ap.parse_args(argv)
 
     cfg = load_config()
     k1 = cfg.get("retrieval.bm25_k1", 1.5)
     b = cfg.get("retrieval.bm25_b", 0.75)
     questions = load_questions(Path(a.questions))
+    quotes = (json.loads(Path(a.gold_quotes).read_text(encoding="utf-8"))
+              if Path(a.gold_quotes).is_file() else {})
+    if not quotes:
+        print(f"WARNING: no gold quotes at {a.gold_quotes}; falling back to id "
+              f"matching, which is NOT comparable across settings", file=sys.stderr)
 
     results = []
-    print(f"{'setting':>12} {'recall@'+str(a.k):>10} {'mrr':>6} "
+    print(f"{'setting':>12} {'recall@'+str(a.k):>10} {'(by id)':>9} {'mrr':>6} "
           f"{'false_abs':>10} {'false_ans':>10} {'thresh':>7}")
     for s in a.settings:
         size, overlap = (int(x) for x in s.split("/"))
@@ -138,15 +181,16 @@ def main(argv=None) -> int:
         r = Retriever.from_jsonl(path, k1=k1, b=b)
         # threshold chosen from the data: the 25th percentile of answerable top-1
         # scores, which admits most real evidence without admitting nothing.
-        probe = evaluate(r, questions, a.k, 0.0)
+        probe = evaluate(r, questions, a.k, 0.0, quotes)
         scores = sorted(x["top_score"] for x in probe["rows"]
                         if x["gold"] and x["top_score"] > 0)
         thr = scores[len(scores) // 4] if scores else 0.0
-        res = evaluate(r, questions, a.k, thr)
+        res = evaluate(r, questions, a.k, thr, quotes)
         res.update(chunk_size=size, overlap=overlap, n_chunks=len(r.chunks))
         results.append(res)
-        print(f"{s:>12} {res['recall_at_k']:>10.1%} {res['mrr']:>6.2f} "
-              f"{res['false_abstain']:>10.1%} {res['false_answer']:>10.1%} {thr:>7.2f}")
+        print(f"{s:>12} {res['recall_at_k']:>10.1%} {res['recall_at_k_by_id']:>9.1%} "
+              f"{res['mrr']:>6.2f} {res['false_abstain']:>10.1%} "
+              f"{res['false_answer']:>10.1%} {thr:>7.2f}")
 
     # per-type recall at the best setting, for the report
     if results:
@@ -173,18 +217,26 @@ def main(argv=None) -> int:
         sw = sweep(r, questions, a.k)
         print(f"\nthreshold sweep at {target}  "
               f"(n_answerable={sw['n_answerable']}, "
-              f"n_unanswerable={sw['n_unanswerable']}, k={a.k})")
-        print(f"{'thresh':>8} {'false_abs':>10} {'false_ans':>10} {'errors':>7}")
-        print("-" * 39)
+              f"n_unanswerable={sw['n_unanswerable']}, "
+              f"n_ambiguous={sw['n_ambiguous']}, k={a.k})")
+        print("A=answerable (want admitted)  U=unanswerable (want refused)  "
+              "T=ambiguous (not an error either way)")
+        print(f"{'thresh':>8} {'A refused':>12} {'U admitted':>12} "
+              f"{'T admitted':>12} {'errors':>7}")
+        print("-" * 55)
         for p in sw["points"]:
             print(f"{p['threshold']:>8.2f} "
-                  f"{p['false_abstain']:>4}/{p['n_answerable']:<5} "
-                  f"{p['false_answer']:>4}/{p['n_unanswerable']:<5} "
+                  f"{p['false_abstain']:>5}/{p['n_answerable']:<6} "
+                  f"{p['false_answer']:>5}/{p['n_unanswerable']:<6} "
+                  f"{p['ambiguous_admitted']:>5}/{p['n_ambiguous']:<6} "
                   f"{p['total_errors']:>7}")
         best_pt = min(sw["points"], key=lambda p: p["total_errors"])
         print(f"\nlowest total errors at thresh={best_pt['threshold']}: "
-              f"{best_pt['false_abstain']}/{best_pt['n_answerable']} abstained, "
-              f"{best_pt['false_answer']}/{best_pt['n_unanswerable']} admitted")
+              f"{best_pt['false_abstain']}/{best_pt['n_answerable']} answerable "
+              f"refused, {best_pt['false_answer']}/{best_pt['n_unanswerable']} "
+              f"unanswerable admitted, "
+              f"{best_pt['ambiguous_admitted']}/{best_pt['n_ambiguous']} ambiguous "
+              f"admitted (neither counted as an error)")
         zero_both = [p for p in sw["points"]
                      if p["false_abstain"] == 0 and p["false_answer"] == 0]
         print(f"thresholds with BOTH zero: {len(zero_both)}")

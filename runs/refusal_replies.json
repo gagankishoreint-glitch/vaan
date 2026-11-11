@@ -1,0 +1,194 @@
+[
+  {
+    "i": 1,
+    "kind": "passages_only",
+    "reason": "gate_low_score",
+    "spent": 0
+  },
+  {
+    "i": 2,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 3,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 4,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 5,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 6,
+    "kind": "passages_only",
+    "reason": "no citations",
+    "spent": 400
+  },
+  {
+    "i": 7,
+    "kind": "passages_only",
+    "reason": "gate_low_score",
+    "spent": 0
+  },
+  {
+    "i": 8,
+    "kind": "passages_only",
+    "reason": "gate_low_score",
+    "spent": 0
+  },
+  {
+    "i": 9,
+    "kind": "passages_only",
+    "reason": "gate_low_score",
+    "spent": 0
+  },
+  {
+    "i": 10,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 11,
+    "kind": "passages_only",
+    "reason": "gate_low_score",
+    "spent": 0
+  },
+  {
+    "i": 12,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 13,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 14,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 15,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 16,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 17,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 18,
+    "kind": "passages_only",
+    "reason": "no citations",
+    "spent": 400
+  },
+  {
+    "i": 19,
+    "kind": "passages_only",
+    "reason": "gate_low_score",
+    "spent": 0
+  },
+  {
+    "i": 20,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 21,
+    "kind": "passages_only",
+    "reason": "gate_low_score",
+    "spent": 0
+  },
+  {
+    "i": 22,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 23,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 24,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 25,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 26,
+    "kind": "passages_only",
+    "reason": "no citations",
+    "spent": 400
+  },
+  {
+    "i": 27,
+    "kind": "passages_only",
+    "reason": "gate_low_score",
+    "spent": 0
+  },
+  {
+    "i": 28,
+    "kind": "passages_only",
+    "reason": "gate_low_score",
+    "spent": 0
+  },
+  {
+    "i": 29,
+    "kind": "passages_only",
+    "reason": "gate_low_score",
+    "spent": 0
+  },
+  {
+    "i": 30,
+    "kind": "verified_answer",
+    "reason": "ok",
+    "spent": 400
+  },
+  {
+    "i": 31,
+    "kind": "passages_only",
+    "reason": "gate_low_score",
+    "spent": 0
+  },
+  {
+    "i": 32,
+    "kind": "passages_only",
+    "reason": "local TPM budget exhausted: 8000+400 > 8000",
+    "spent": 0
+  }
+]

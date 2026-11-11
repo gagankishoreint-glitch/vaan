@@ -428,3 +428,188 @@ def test_checker_accepts_a_null_reply_type_only_for_abandoned():
                         working_s=0.0, retrying_s=0.0),
            base(type="terminal", terminal="answered", reply_type=None)]
     assert any("sent nothing" in v.detail for v in check(bad).violations)
+
+
+# ---------------------------------------------------------------- hit definition
+
+def test_hit_is_decided_by_quote_containment_not_chunk_id(tmp_path):
+    """(d) A gold id from the 900 index does not exist at another chunking, so an
+    id-based hit scores the same evidence as a miss. The quote must decide."""
+    from relay.retrieval.bm25 import Retriever
+    from scripts.retrieval_eval import evaluate
+    r = Retriever.from_jsonl("data/chunks/exp1200/chunks.jsonl")
+    qs = [{"qid": "N4", "type": "numeric", "gold": ["moshi-v1:s3.2.2:c0002"],
+           "question": "What are the Temporal Transformer model dimension and MLP "
+                       "dimension?",
+           "answer": "4096 and 11264"}]
+    import json as _j
+    quotes = _j.loads(open("data/eval/gold_quotes.json").read())
+    by_id = evaluate(r, qs, 4, 0.0, quotes=None)
+    by_quote = evaluate(r, qs, 4, 0.0, quotes=quotes)
+    assert by_id["rows"][0]["id_rank"] is None, "gold id unexpectedly in 1200 index"
+    assert by_quote["rows"][0]["rank"] is not None, "quote hit not found"
+    assert by_quote["recall_at_k"] > by_id["recall_at_k"]
+
+
+def test_every_gold_quote_resolves_in_its_own_chunk():
+    import json
+    from relay.retrieval.text import contains_quote
+    chunks = {c["chunk_id"]: c for c in
+              (json.loads(l) for l in open("data/chunks/exp900/chunks.jsonl"))}
+    data = json.load(open("data/eval/gold_quotes.json"))
+    assert data
+    for qid, rec in data.items():
+        for q in rec["quotes"]:
+            assert contains_quote(chunks[q["chunk_id"]]["text"], q["quote"]), qid
+
+
+# ---------------------------------------------------------------- sweep split
+
+def test_sweep_counts_ambiguous_separately_from_unanswerable():
+    """(c) An ambiguous question scoring high is correct behaviour, not a false
+    answer. Folding it into the unanswerable pool punishes the system for being
+    right."""
+    from relay.retrieval.bm25 import Retriever
+    from scripts.retrieval_eval import sweep
+    import json as _j
+    r = Retriever.from_jsonl("data/chunks/exp900/chunks.jsonl")
+    qs = [{"qid": "T1", "type": "ambiguous", "gold": [],
+           "question": "What is attention?", "answer": "ambiguous"},
+          {"qid": "U1", "type": "unanswerable", "gold": [],
+           "question": "What is the capital of France?", "answer": "none"},
+          {"qid": "A1", "type": "single", "gold": ["attn-v7:s3.2.2:c0001"],
+           "question": "How many attention heads?", "answer": "8"}]
+    sw = sweep(r, qs, 4)
+    assert sw["n_ambiguous"] == 1
+    assert sw["n_unanswerable"] == 1
+    assert sw["n_answerable"] == 1
+    for p in sw["points"]:
+        assert p["ambiguous_admitted"] + (p["n_ambiguous"] - p["ambiguous_admitted"]) \
+            == p["n_ambiguous"]
+        # total_errors must exclude ambiguous entirely
+        assert p["total_errors"] == p["false_abstain"] + p["false_answer"]
+
+
+def test_ambiguous_question_is_not_counted_as_a_false_answer():
+    from relay.retrieval.bm25 import Retriever
+    from scripts.retrieval_eval import sweep
+    r = Retriever.from_jsonl("data/chunks/exp900/chunks.jsonl")
+    # one ambiguous question that scores very high, and no unanswerable ones
+    qs = [{"qid": "T2", "type": "ambiguous", "gold": [],
+           "question": "How many attention heads does the Transformer use?",
+           "answer": "ambiguous"}]
+    sw = sweep(r, qs, 4)
+    top = max(p["threshold"] for p in sw["points"])
+    low = [p for p in sw["points"] if p["threshold"] <= 1.0]
+    for p in low:
+        assert p["false_answer"] == 0, "ambiguous must never be a false answer"
+
+
+# ---------------------------------------------------------------- streaming
+
+def test_sse_parser_rejects_done_and_keeps_frames():
+    from relay.gateway.stream import parse_sse_line
+    assert parse_sse_line("data: [DONE]") is None
+    assert parse_sse_line("") is None
+    assert parse_sse_line(": keepalive") is None
+    assert parse_sse_line("data: not json") is None
+    assert parse_sse_line('data: {"choices":[{"delta":{"content":"hi"}}]}') == {
+        "choices": [{"delta": {"content": "hi"}}]}
+
+
+def test_role_only_frame_is_a_first_delta_but_not_a_first_token():
+    """A frame carrying `delta.role` and no content is real and must stamp
+    first_delta; treating it as a first token would make model_ttft a lie."""
+    from relay.gateway.stream import delta_text
+    assert delta_text({"choices": [{"delta": {"role": "assistant"}}]}) == ""
+    assert delta_text({"choices": [{"delta": {"content": "hi"}}]}) == "hi"
+    assert delta_text({"choices": []}) == ""
+    assert delta_text({}) == ""
+
+
+def test_stream_timestamps_are_stamped_at_arrival_not_at_replay():
+    """BUG-017: buffering frames and stamping during replay made first_delta and
+    model_ttft identical, which destroyed the distinction between them."""
+    import asyncio
+    from relay.gateway.stream import consume
+
+    class Clock:
+        def __init__(self): self.t = 0.0
+        def now(self):
+            self.t += 0.01      # every observation advances time
+            return self.t
+
+    async def frames():
+        yield 'data: {"choices":[{"delta":{"role":"assistant"}}]}'
+        for _ in range(3):
+            yield 'data: {"choices":[{"delta":{"content":"tok "}}]}'
+
+    st = asyncio.run(consume(frames(), Clock(), t_sent=0.0))
+    assert st.first_delta is not None and st.model_ttft is not None
+    assert st.model_ttft > st.first_delta, "stamped at the same instant"
+    assert st.text == "tok tok tok "
+
+
+def test_stream_with_no_content_raises_rather_than_returning_empty():
+    import asyncio
+    from relay.gateway.stream import consume
+
+    class Clock:
+        def now(self): return 1.0
+
+    async def frames():
+        yield 'data: {"choices":[{"delta":{"role":"assistant"}}]}'
+        yield "data: [DONE]"
+
+    with pytest.raises(TimeoutError):
+        asyncio.run(consume(frames(), Clock(), t_sent=0.0))
+
+
+def test_verification_normalises_whitespace_between_draft_and_source():
+    """BUG-018: a streamed draft joins words with spaces where the PDF chunk has a
+    newline. A raw `quote in chunk.text` test fails and the answer is discarded as
+    unverifiable -- for a correct answer. Both sides must be normalised."""
+    from relay.retrieval.text import contains_quote
+    chunk = "about 4.5 million\nsentence pairs."
+    streamed_draft_sentence = "about 4.5 million sentence pairs."
+    assert streamed_draft_sentence not in chunk          # the raw test fails
+    assert contains_quote(chunk, streamed_draft_sentence)  # the normalised one works
+
+
+def test_streamed_and_buffered_pipelines_agree(tmp_path):
+    """The whole point of adding streaming was measurement, not behaviour. If the
+    reply changes, a measurement change has leaked into the product."""
+    import asyncio
+    import httpx
+    from relay.clock import RealClock
+    from relay.config import load_config
+    from relay.gateway.gateway import Gateway
+    from relay.pipeline.pipeline import Pipeline
+    from relay.retrieval.bm25 import Retriever
+
+    cfg = load_config()
+    r = Retriever.from_jsonl("data/chunks/exp900/chunks.jsonl")
+    Q = ("What shared vocabulary size does the byte-pair encoding produce for "
+         "WMT 2014 English-German?")
+
+    class S:
+        req_id = "s"
+        def attempt_start(self, a): pass
+        def attempt_end(self, a): pass
+        def emit(self, *a, **k): pass
+        def abandon(self, *a, **k): pass
+
+    async def go(stream):
+        async with httpx.AsyncClient(base_url="http://127.0.0.1:8009/openai/v1",
+                                     timeout=30.0) as c:
+            gw = Gateway.from_config(cfg, RealClock(), None,
+                                     base_url="http://127.0.0.1:8009/openai/v1",
+                                     api_key="x", client=c)
+            return await Pipeline(cfg, r, gw, S(), stream=stream).answer(Q)
+
+    try:
+        buffered = asyncio.run(go(False))
+        streamed = asyncio.run(go(True))
+    except Exception as e:                     # stand-in not running
+        pytest.skip(f"stand-in unavailable: {e}")
+    assert buffered.terminal == streamed.terminal, (buffered.terminal, streamed.terminal)

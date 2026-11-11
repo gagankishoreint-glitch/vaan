@@ -16,6 +16,7 @@ from relay.contracts import Citation, NoEvidence, PassagesOnly, Reply, is_reply
 from relay.gateway.gateway import DeadlineExceeded, BreakerOpen, Gateway
 from relay.pipeline.verify import check_citations, check_numbers_present, mint
 from relay.retrieval.bm25 import Hit, Retriever
+from relay.retrieval.text import contains_quote
 
 DRAFT_PROMPT = """Answer the question using ONLY the numbered passages.
 Cite with [chunk_id]. If the passages do not contain the answer, reply exactly:
@@ -76,7 +77,7 @@ def send_reply(reply: Optional[Reply], *, abandoned: bool = False) -> Optional[R
 class Pipeline:
     def __init__(self, cfg: Config, retriever: Retriever, gateway: Gateway,
                  scope, embed_quote_from: Optional[callable] = None,
-                 patience_s: Optional[float] = None):
+                 patience_s: Optional[float] = None, stream: bool = False):
         self.cfg = cfg
         self.r = retriever
         self.gw = gateway
@@ -89,16 +90,60 @@ class Pipeline:
         # expiry here cancels the in-flight call and stops token spend.
         self.patience_s = patience_s if patience_s is not None else cfg.get(
             "user.patience_s")
+        #: Stream the draft so model_ttft is observable. Off by default: the
+        #: pipeline parses the whole draft before verifying, so streaming the
+        #: draft to itself buys no user-visible latency yet -- it buys the
+        #: MEASUREMENT of when the model actually started answering.
+        self.stream = stream or bool(cfg.get("pipeline.stream", False))
 
-    async def _draft(self, hits, question: str):
-        return await self.gw.call(
+    #: Set by the gateway on the Attempt it just finished, so the pipeline can
+    #: compute user_ttft without re-deriving when the request was sent.
+    _last_attempt = None
+
+    async def _draft(self, hits, question: str, stream: bool = False):
+        self._t_request_sent = self.gw.clock.now()
+        body = await self.gw.call(
             scope=self.scope, step="draft",
             model=self.cfg.get("models.small.id"),
             messages=[{"role": "user", "content": DRAFT_PROMPT.format(
                 passages=format_passages(hits), question=question)}],
             max_tokens=self.cfg.get("pipeline.max_tokens.draft", 400),
             deadline_s=self.deadline,
-            reasoning_effort=self.cfg.get("models.reasoning_effort"))
+            reasoning_effort=self.cfg.get("models.reasoning_effort"),
+            stream=stream or self.stream)
+        return body
+
+    def _stamp_user_ttft(self, reply) -> None:
+        """user_ttft = when the VERIFIED answer first became available to the user.
+
+        This cannot ride on `attempt.end`: that event is emitted by the gateway
+        before verification runs, so anything written to the Attempt afterwards
+        never reaches the log (the log is append-only by design). It is therefore
+        its own event, emitted here, carrying the same attempt id so the three
+        stamps can be joined back together.
+
+        If it is absent, the answer was never verified and there is no user_ttft.
+        That absence is correct; a zero would be a lie.
+        """
+        att = getattr(self.gw, "_last_attempt", None)
+        if att is None:
+            return
+        now = self.gw.clock.now()
+        att.t_user_ttft = now
+        try:
+            self.scope.emit(
+                "reply.ready", attempt_id=att.attempt_id, t_sent=att.t_sent,
+                first_delta_s=(None if att.t_first_delta is None
+                               else round(att.t_first_delta - att.t_sent, 4)),
+                model_ttft_s=(None if att.t_first_token is None
+                              else round(att.t_first_token - att.t_sent, 4)),
+                user_ttft_s=round(now - att.t_sent, 4),
+                verify_cost_s=(None if att.t_first_token is None
+                               else round(now - att.t_first_token, 4)),
+                reply=type(reply).__name__)
+        except Exception:
+            # Never let instrumentation break an answer that is ready to send.
+            pass
 
     async def answer(self, question: str) -> Outcome_:
         hits = self.r.search(question, k=self.k)
@@ -122,7 +167,10 @@ class Pipeline:
             else:
                 body = await self._draft(hits, question)
         except asyncio.TimeoutError:
-            self.scope.abandon("patience")
+            # The reason carries the VALUE. "patience" alone is unreadable a week
+            # later: it does not say whether the user waited 50 ms or 20 s, and
+            # that number is the whole content of an abandonment measurement.
+            self.scope.abandon(f"patience_{self.patience_s}s")
             return Outcome_(send_reply(None, abandoned=True), "abandoned",
                             f"patience_{self.patience_s}s")
         except (DeadlineExceeded, BreakerOpen) as e:
@@ -144,13 +192,24 @@ class Pipeline:
         for c in cited:
             chunk = by_id[c.chunk_id]
             # Take the longest sentence of the draft that appears verbatim.
+            #
+            # The comparison MUST go through the same normalisation the verifier
+            # uses (NFKC + de-hyphenation + whitespace collapse). A raw
+            # `s in chunk.text` here fails whenever the draft's whitespace differs
+            # from the chunk's -- and a streamed draft differs by construction,
+            # because SSE deltas are word-shaped and the newline between two PDF
+            # lines is not part of any delta (BUG-018). Buffered drafts happened to
+            # preserve the newline, so the fault only appeared once streaming was
+            # added; it would have appeared for any model that wrapped differently.
             best = ""
             for sent in re.split(r"(?<=[.!?])\s+", prose):
-                s = sent.strip()
-                if len(s) > 25 and s in chunk.text and len(s) > len(best):
-                    best = s
+                cand = sent.strip()
+                if len(cand) > 25 and contains_quote(chunk.text, cand) \
+                        and len(cand) > len(best):
+                    best = cand
             if best:
                 citations.append(Citation(chunk_id=c.chunk_id, quote=best))
+        # Verification is done from here on; the verified answer exists.
         check = check_citations(prose, citations, by_id)
         if not check:
             return Outcome_(send_reply(PassagesOnly(
@@ -163,4 +222,6 @@ class Pipeline:
                 "An unverified number appeared in the answer.",
                 tuple(h.chunk for h in hits), "verify_failed")), "passages_only",
                 nums.reason)
-        return Outcome_(send_reply(mint(prose, tuple(citations))), "answered", "ok")
+        reply = mint(prose, tuple(citations))
+        self._stamp_user_ttft(reply)     # first byte of the VERIFIED answer
+        return Outcome_(send_reply(reply), "answered", "ok")
