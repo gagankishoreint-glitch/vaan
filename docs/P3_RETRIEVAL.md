@@ -9,9 +9,38 @@
 > chunk id — see "How a hit is decided" below. Every earlier recall figure in this
 > document was scored by id and is superseded.
 
+## Reproducing the table from a fresh clone
+
+`data/chunks/**/*.jsonl` is **git-ignored** — the chunk files are generated, not
+source. A fresh clone therefore has no indexes at all and must build them. The three
+settings the table compares:
+
 ```bash
-python -m scripts.ingest --chunk-size 900 --overlap 150 --out data/chunks/exp900
+python -m scripts.ingest --chunk-size 600  --overlap 100 --out data/chunks/exp600
+python -m scripts.ingest --chunk-size 900  --overlap 150 --out data/chunks/exp900
+python -m scripts.ingest --chunk-size 1200 --overlap 200 --out data/chunks/exp1200
 python -m scripts.retrieval_eval
+```
+
+Expected chunk counts, so a drift shows up immediately:
+
+| setting | chunks | command |
+|---|---|---|
+| 600/100 | **744** | `python -m scripts.ingest --chunk-size 600 --overlap 100 --out data/chunks/exp600` |
+| 900/150 | **500** | `python -m scripts.ingest --chunk-size 900 --overlap 150 --out data/chunks/exp900` |
+| 1200/200 | **379** | `python -m scripts.ingest --chunk-size 1200 --overlap 200 --out data/chunks/exp1200` |
+
+If a count differs, the ingest changed and **every number below is stale** — the
+gold ids are index-specific. The PDFs are also git-ignored; restore them per
+`data/papers/SHA256SUMS` (committed) and verify with
+`(cd data/papers && sha256sum -c SHA256SUMS)` before ingesting.
+
+`python -m scripts.retrieval_eval --no-sweep` reproduces just the table; without the
+flag it also runs the threshold sweep, which takes a couple of seconds.
+
+```bash
+python -m scripts.check_questions       # every gold id resolves; 20 carry gold
+python -m scripts.gold_quotes --check   # every quote still verbatim in its chunk
 ```
 
 ## Results

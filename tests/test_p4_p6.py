@@ -1,6 +1,8 @@
 """One failure-path test per new mechanism. No more than that (compressed mode)."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from relay.contracts import Citation, NoEvidence, PassagesOnly, VerifiedAnswer, mint_verified
@@ -363,7 +365,7 @@ def test_analyze_does_not_report_a_fabricated_ttft(tmp_path, capsys):
 
 # ---------------------------------------------------------------- H4 abandonment
 
-def test_abandonment_cancels_in_flight_and_returns_no_reply():
+def test_abandonment_cancels_in_flight_and_returns_no_reply(index_900):
     """H4. A user who leaves must cancel the in-flight model call, not merely stop
     looking at it, and must be sent nothing."""
     import asyncio
@@ -372,7 +374,6 @@ def test_abandonment_cancels_in_flight_and_returns_no_reply():
     from relay.config import load_config
     from relay.gateway.gateway import Gateway
     from relay.pipeline.pipeline import Pipeline
-    from relay.retrieval.bm25 import Retriever
 
     cfg = load_config()
     cancelled = {"n": 0}
@@ -383,7 +384,7 @@ def test_abandonment_cancels_in_flight_and_returns_no_reply():
         return httpx.Response(200, json={"choices": []})
 
     async def go():
-        r = Retriever.from_jsonl("data/chunks/exp900/chunks.jsonl")
+        r = index_900
         class Scope:
             req_id = "A"
             def emit(self, *a, **k): pass
@@ -434,16 +435,24 @@ def test_checker_accepts_a_null_reply_type_only_for_abandoned():
 
 def test_hit_is_decided_by_quote_containment_not_chunk_id(tmp_path):
     """(d) A gold id from the 900 index does not exist at another chunking, so an
-    id-based hit scores the same evidence as a miss. The quote must decide."""
+    id-based hit scores the same evidence as a miss. The quote must decide.
+
+    The 1200/200 index is BUILT HERE from the PDFs. It used to be read from
+    data/chunks/exp1200/chunks.jsonl, which is git-ignored, so this test passed
+    only on a machine where someone had run the ingest CLI (BUG-019).
+    """
+    import json as _j
     from relay.retrieval.bm25 import Retriever
     from scripts.retrieval_eval import evaluate
-    r = Retriever.from_jsonl("data/chunks/exp1200/chunks.jsonl")
+    from tests.indexes import write_index
+
+    r = Retriever.from_jsonl(write_index(tmp_path, 1200, 200))
     qs = [{"qid": "N4", "type": "numeric", "gold": ["moshi-v1:s3.2.2:c0002"],
            "question": "What are the Temporal Transformer model dimension and MLP "
                        "dimension?",
            "answer": "4096 and 11264"}]
-    import json as _j
-    quotes = _j.loads(open("data/eval/gold_quotes.json").read())
+    quotes = _j.loads((Path(__file__).resolve().parent.parent
+                       / "data/eval/gold_quotes.json").read_text())
     by_id = evaluate(r, qs, 4, 0.0, quotes=None)
     by_quote = evaluate(r, qs, 4, 0.0, quotes=quotes)
     assert by_id["rows"][0]["id_rank"] is None, "gold id unexpectedly in 1200 index"
@@ -451,11 +460,13 @@ def test_hit_is_decided_by_quote_containment_not_chunk_id(tmp_path):
     assert by_quote["recall_at_k"] > by_id["recall_at_k"]
 
 
-def test_every_gold_quote_resolves_in_its_own_chunk():
+def test_every_gold_quote_resolves_in_its_own_chunk(tmp_path):
     import json
     from relay.retrieval.text import contains_quote
+    from tests.indexes import write_index
     chunks = {c["chunk_id"]: c for c in
-              (json.loads(l) for l in open("data/chunks/exp900/chunks.jsonl"))}
+              (json.loads(l) for l in
+               open(write_index(tmp_path, 900, 150), encoding="utf-8"))}
     data = json.load(open("data/eval/gold_quotes.json"))
     assert data
     for qid, rec in data.items():
@@ -465,14 +476,12 @@ def test_every_gold_quote_resolves_in_its_own_chunk():
 
 # ---------------------------------------------------------------- sweep split
 
-def test_sweep_counts_ambiguous_separately_from_unanswerable():
+def test_sweep_counts_ambiguous_separately_from_unanswerable(index_900):
     """(c) An ambiguous question scoring high is correct behaviour, not a false
     answer. Folding it into the unanswerable pool punishes the system for being
     right."""
-    from relay.retrieval.bm25 import Retriever
     from scripts.retrieval_eval import sweep
-    import json as _j
-    r = Retriever.from_jsonl("data/chunks/exp900/chunks.jsonl")
+    r = index_900
     qs = [{"qid": "T1", "type": "ambiguous", "gold": [],
            "question": "What is attention?", "answer": "ambiguous"},
           {"qid": "U1", "type": "unanswerable", "gold": [],
@@ -490,10 +499,9 @@ def test_sweep_counts_ambiguous_separately_from_unanswerable():
         assert p["total_errors"] == p["false_abstain"] + p["false_answer"]
 
 
-def test_ambiguous_question_is_not_counted_as_a_false_answer():
-    from relay.retrieval.bm25 import Retriever
+def test_ambiguous_question_is_not_counted_as_a_false_answer(index_900):
     from scripts.retrieval_eval import sweep
-    r = Retriever.from_jsonl("data/chunks/exp900/chunks.jsonl")
+    r = index_900
     # one ambiguous question that scores very high, and no unanswerable ones
     qs = [{"qid": "T2", "type": "ambiguous", "gold": [],
            "question": "How many attention heads does the Transformer use?",
@@ -576,7 +584,7 @@ def test_verification_normalises_whitespace_between_draft_and_source():
     assert contains_quote(chunk, streamed_draft_sentence)  # the normalised one works
 
 
-def test_streamed_and_buffered_pipelines_agree(tmp_path):
+def test_streamed_and_buffered_pipelines_agree(index_900):
     """The whole point of adding streaming was measurement, not behaviour. If the
     reply changes, a measurement change has leaked into the product."""
     import asyncio
@@ -585,10 +593,9 @@ def test_streamed_and_buffered_pipelines_agree(tmp_path):
     from relay.config import load_config
     from relay.gateway.gateway import Gateway
     from relay.pipeline.pipeline import Pipeline
-    from relay.retrieval.bm25 import Retriever
 
     cfg = load_config()
-    r = Retriever.from_jsonl("data/chunks/exp900/chunks.jsonl")
+    r = index_900
     Q = ("What shared vocabulary size does the byte-pair encoding produce for "
          "WMT 2014 English-German?")
 
