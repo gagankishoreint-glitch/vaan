@@ -1,0 +1,72 @@
+# The Relay -- every number lives here, nothing hard-coded.
+#
+# Contract for this file:
+#   * a value of `null` means NOT YET MEASURED. Code that reads it must use
+#     Config.require(), which raises. We never invent a number (rule 4).
+#   * every null line carries a `# set by ...` note naming the phase and the
+#     measurement that fills it. tests/test_config.py enforces this.
+#   * UNVERIFIED means "from memory / docs table, not yet observed". The P1
+#     probe replaces it with observed values.
+
+meta:
+  yaml_version: 1
+
+# Limits copied from the Groq docs table. UNVERIFIED until the P1 probe.
+# P1 overwrites these with values observed from x-ratelimit-* headers.
+models:
+  small:  {id: "openai/gpt-oss-20b",  rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+  large:  {id: "openai/gpt-oss-120b", rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+  buckets_separate_per_model: null    # set by P1 probe: exhaust one model, watch the other's headers
+
+user:
+  patience_s: null                    # set by L5 measurement: observed time-to-abandon in the harness
+
+slo:
+  ttft_p50_s: null                    # set by P4/P9 baseline run: p50 of attempt t_first_token - t_sent
+  ttft_p95_s: null                    # set by P4/P9 baseline run: p95 of the same
+  total_p95_s: null                   # set by P9: p95 of request total_elapsed_s
+
+pipeline:
+  max_loops: 1
+  max_redrafts: 1
+  top_k: 4
+  max_tokens: {rewrite: 80, draft: 400, verify: 120}
+  # Gate on the optional LLM verify step (PRD s4). Code checks always run.
+  llm_verify:
+    min_tpm_remaining_frac: null      # set by P6: budget fraction below which LLM verify is skipped
+    min_tpd_remaining_frac: null      # set by P6: same rule, daily bucket
+
+gateway:
+  retry_policy: managed               # managed | naive (naive exists only to show harm on the stand-in)
+  retry_budget_ratio: 0.1             # fraction of traffic allowed to retry at all
+  attempt_timeout_s: null             # set by P1 probe: p99 of stand-in fast path, plus margin
+  queue_max: null                     # set by P1: depth at which admission starts queueing/shedding
+  breaker: {fail_threshold: 5, open_s: 10}
+  retry_jitter_frac: 0.0              # set by P9: raised if the harness shows retry synchronisation
+  request_deadline_s: null            # set by L5: user patience minus reply-render margin
+
+ladder:
+  # PRD s6. L0 and L3 are structural; L1 and L2 need measured thresholds.
+  l1_tpm_remaining_frac: 0.25         # trigger: TPM remaining below this fraction
+  l1_queue_wait_s: 2.0                # trigger: admission queue wait exceeds this
+  l2_dup_window_s: null               # set by P7: duplicate-arrival window measured from the event log
+  l2_max_tokens_scale: null           # set by P7: answer-cap multiplier chosen at L2
+
+retrieval:
+  chunk_size: null                    # set by P2 ingest, re-tuned in P10 (>= 3 settings compared)
+  chunk_overlap: null                 # set by P2: chosen against measured retrieval recall
+  bm25_k1: 1.5                        # library default; re-tuned only if P10 shows it matters
+  bm25_b: 0.75
+
+standin:
+  seed: 7
+  # Calibration targets for P4, all sourced from the P1 probe.
+  ttft_ms: null                       # set by P1 probe: TTFT distribution to replay
+  tokens_per_s: null                  # set by P1 probe: observed generation rate
+  error_rate: null                    # set by P1 probe: observed 5xx rate (0 if none seen)
+  p429_rate: null                     # set by P1 probe: observed 429 rate under our traffic
+  per_minute_limit: null              # set by P1 probe: observed x-ratelimit-limit-tokens
+  per_day_limit: null                 # set by P1 probe: observed x-ratelimit-limit-requests
+
+observability:
+  latency_sum_tolerance_s: 0.05       # tolerance for waiting + working + retrying ~= total
