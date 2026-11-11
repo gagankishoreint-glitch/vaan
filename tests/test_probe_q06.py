@@ -101,3 +101,101 @@ def test_token_param_is_recorded_on_every_result():
                token_param="max_completion_tokens")
     assert r.token_param == "max_completion_tokens"
     assert r.max_tokens_sent == 300
+
+
+# ---------------------------------------------------------------- ledger on abort
+
+def _fake_transport(usage, status=200):
+    """A transport that answers every request with one real-shaped body."""
+    import httpx
+    body = {"id": "x", "choices": [{"message": {"content": "ok"},
+                                    "finish_reason": "stop"}],
+            "usage": usage}
+    headers = {"x-ratelimit-remaining-tokens": "7900",
+               "x-ratelimit-limit-tokens": "8000",
+               "x-ratelimit-remaining-requests": "999",
+               "x-ratelimit-limit-requests": "1000"}
+    return httpx.MockTransport(lambda request: httpx.Response(
+        status, json=body, headers=headers))
+
+
+def test_ledger_records_the_charge_when_the_probe_aborts_at_the_ceiling(tmp_path,
+                                                                       monkeypatch):
+    """(o) A real run charged 117 tokens and aborted at cap 100, and the ledger was
+    never written -- the write sat after the try/except, so the early `return 1`
+    skipped it. Any run that charged tokens must be recorded, however it ended."""
+    import scripts.probe as probe_mod
+    from scripts.probe import Ledger, Probe, Recorder, TokenCeiling
+
+    # conftest points LEDGER_PATH at tmp_path for every test; write the file the
+    # suite will use.
+    ledger_path = tmp_path / "TOKEN_LEDGER.md"
+    ledger_path.write_text("# TOKEN LEDGER\n\nno runs yet\n", encoding="utf-8")
+
+    # cap 100, but each call actually charges 117 -> the second reserve is refused
+    ceiling = TokenCeiling(cap=100, day_remaining=10**9)
+    probe = Probe(cfg=probe_mod.load_config(), base_url="http://fake.invalid",
+                  api_key="k", ceiling=ceiling,
+                  recorder=Recorder(tmp_path / "run", "k", dry_run=False),
+                  dry_run=False, timeout=5.0,
+                  models={"small": "openai/gpt-oss-20b",
+                          "large": "openai/gpt-oss-120b"},
+                  client=None, token_param="max_completion_tokens")
+    import httpx
+    probe._client = httpx.Client(base_url="http://fake.invalid",
+                                 transport=_fake_transport(
+                                     {"prompt_tokens": 76, "completion_tokens": 41,
+                                      "total_tokens": 117}))
+
+    # two calls: the first settles 117, which alone exceeds the cap of 100
+    try:
+        probe.chat(mode="single", label="a", model="openai/gpt-oss-20b",
+                   messages=[{"role": "user", "content": "hi"}], max_tokens=80)
+        probe.chat(mode="single", label="b", model="openai/gpt-oss-20b",
+                   messages=[{"role": "user", "content": "hi"}], max_tokens=80)
+    except Exception:
+        pass
+    assert ceiling.spent == 117, f"expected one settled call, got {ceiling.spent}"
+
+    # simulate what the finally block does, which is what main() now runs
+    ledger = Ledger(ledger_path)
+    ledger.spend(ceiling.spent, row={"utc": "2026-11-11T00:00:00+00:00",
+                                     "modes": ["single"], "tokens": ceiling.spent,
+                                     "ceiling": 100,
+                                     "abort": "aborted at ceiling: cap 100"})
+    ledger.save()
+
+    text = ledger_path.read_text()
+    assert "117" in text, "the charge is not in the ledger"
+    reloaded = Ledger(ledger_path)
+    assert reloaded.rows and reloaded.rows[-1]["tokens"] == 117
+    assert "abort" in reloaded.rows[-1], "an aborted run must say it was aborted"
+
+
+def test_main_writes_the_ledger_even_though_the_ceiling_aborts(monkeypatch, tmp_path):
+    """End to end through main(): the abort path must still save the ledger."""
+    import scripts.probe as pm
+    from relay.config import load_config
+
+    ledger_path = tmp_path / "TOKEN_LEDGER.md"
+    ledger_path.write_text("# TOKEN LEDGER\n", encoding="utf-8")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_BASE_URL", "http://fake.invalid")
+
+    # Force the ceiling to be hit immediately, after one real charge.
+    calls = {"n": 0}
+
+    def fake_chat(self, **kw):
+        calls["n"] += 1
+        self.ceiling.settle(80, 117)          # charge real tokens
+        raise pm.CeilingReached("reserving 80 would exceed the cap: test")
+
+    monkeypatch.setattr(pm.Probe, "chat", fake_chat)
+    monkeypatch.setattr(pm, "load_env", lambda *a, **k: None)
+
+    rc = pm.main(["--go", "--mode", "single", "--max-tokens-total", "1000",
+                  "--timeout", "5", "--plan-today", "60000",
+                  "--run-dir", str(tmp_path / "run")])
+    assert rc == 1, "an abort must exit non-zero"
+    text = ledger_path.read_text()
+    assert "117" in text, "ABORTED RUN LOST ITS CHARGE -- the (o) bug is back"

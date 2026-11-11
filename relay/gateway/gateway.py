@@ -1,6 +1,11 @@
 """P5: minimal rate-limit-aware gateway. Single owner of limit state.
 
-Order per call (PRD s5): deadline -> budget reserve -> breaker -> send -> reconcile
+Order per call (PRD s5): deadline -> budget reserve -> breaker -> send -> settle ->
+reconcile. Streamed and buffered responses follow the SAME order: streamed answers are
+every answer the pipeline sends, so a difference between the two paths is a difference
+in how the gateway behaves under load (BUG-025).
+
+    python -m pytest -q tests/test_p4_p6.py                  -> 48 passed
 -> classify -> retry. Every threshold comes from config; a null raises at the point
 of use rather than becoming a number nobody chose.
 
@@ -61,10 +66,15 @@ class Budget:
     #: these, `remaining` cannot be converted to a usage figure (BUG-010).
     provider_limit_tpm: Optional[int] = None
     provider_limit_rpd: Optional[int] = None
+    #: Tokens taken during the current window that no response has accounted for
+    #: yet. `reconcile` may not move the bucket below this, so a header read cannot
+    #: forget an in-flight reservation.
+    tpm_used_floor: int = 0
 
     def take(self, tokens: int, now: float) -> None:
         if now >= self.tpm_reset_at:
             self.tpm_used, self.tpm_reset_at = 0, now + 60.0
+            self.tpm_used_floor = 0
         if now >= self.rpd_reset_at:
             self.rpd_used, self.rpd_reset_at = 0, now + 86400.0
         if self.tpm_used + tokens > self.tpm:
@@ -73,6 +83,7 @@ class Budget:
         if self.rpd_used + 1 > self.rpd:
             raise DeadlineExceeded("local RPD budget exhausted")
         self.tpm_used += tokens      # check and take, no await between
+        self.tpm_used_floor += tokens
         self.rpd_used += 1
         assert self.tpm_used <= self.tpm and self.rpd_used <= self.rpd
 
@@ -83,32 +94,56 @@ class Budget:
         if limit_rpd:
             self.provider_limit_rpd = limit_rpd
 
+    def settle(self, reserved: int, now: float) -> None:
+        """A response arrived: the reservation it represents is no longer in flight.
+
+        Drops the floor by what this attempt took, so the *next* reconcile is free to
+        mirror the header downward or upward. Clamped at zero because a reservation
+        can be settled out of order when attempts overlap -- a floor slightly too low
+        is harmless (it only allows the header to speak), whereas a floor that never
+        falls would slowly ratchet the bucket shut.
+        """
+        self.tpm_used_floor = max(0, self.tpm_used_floor - reserved)
+
     def reconcile(self, remaining_tpm: Optional[int], remaining_rpd: Optional[int],
                   now: float) -> None:
-        """Adopt the provider's view of the bucket, but only DOWNWARD.
+        """Adopt the provider's view of the bucket for the current window.
 
-        Taking the provider's `remaining` verbatim is wrong for a long-lived gateway:
-        the provider's window may be nearly empty from traffic this process did not
-        send, which would starve every request for the rest of that minute. We
-        therefore only raise our recorded usage when the provider says we have less,
-        never reset it to a spent value -- our own window reset stays authoritative.
+        Two things this deliberately does NOT do, both learned the hard way:
+
+        * It does not trust `remaining` while our window is stale. If a `take()` has
+          already rolled our window over, the provider's figure describes a window we
+          are no longer tracking and adopting it would poison the new one.
+        * It does not use OUR limit to reconstruct usage from `remaining`. That is a
+          units mismatch and it pinned the gateway at "budget exhausted" the moment
+          the two limits disagreed (BUG-010). Only the RATIO is reconciled.
+
+        It moves the bucket in BOTH directions. Moving only downward (the previous
+        behaviour) could never release a reservation that the provider had already
+        given back, so a run of short answers would ratchet the local bucket to
+        exhausted while the provider still had plenty of room -- the gateway would
+        then throttle itself for a limit that was not being hit. Whether the provider
+        actually refunds is still unproven (see Q-06b / the A/B curl); this class
+        simply mirrors whatever the header says instead of assuming one answer.
+
+        The upward move is capped so that a single header read cannot erase usage we
+        have taken and not yet seen reflected: the bucket never goes below
+        `tpm_used_floor`, the amount taken during the current window that no response
+        has yet accounted for.
         """
         # Only skip when we KNOW our window has rolled over (a take() has already
         # reset it). `tpm_reset_at == 0.0` means "never taken", not "stale".
         if self.tpm_reset_at and now >= self.tpm_reset_at:
             return                      # our window is stale; keep local truth
-        # `remaining` is only meaningful against the provider's OWN limit. Using our
-        # local limit to reconstruct usage is a units mismatch: it silently pinned
-        # every request to "budget exhausted" the moment the two disagreed
-        # (BUG-010). We therefore reconcile only the RATIO, and only downward.
         if remaining_tpm is not None and self.provider_limit_tpm:
             used_frac = 1.0 - (remaining_tpm / self.provider_limit_tpm)
             provider_used = int(used_frac * self.tpm)
-            self.tpm_used = max(self.tpm_used, min(provider_used, self.tpm))
+            target = max(0, min(provider_used, self.tpm))
+            self.tpm_used = max(self.tpm_used_floor, target)
         if remaining_rpd is not None and self.provider_limit_rpd:
             used_frac = 1.0 - (remaining_rpd / self.provider_limit_rpd)
             provider_used = int(used_frac * self.rpd)
-            self.rpd_used = max(self.rpd_used, min(provider_used, self.rpd))
+            self.rpd_used = max(0, min(provider_used, self.rpd))
 
 
 class Breaker:
@@ -293,6 +328,16 @@ class Gateway:
                 usage = st.usage or {}
                 attempt.tokens_in = usage.get("prompt_tokens")
                 attempt.tokens_out = usage.get("completion_tokens")
+                # Same reconciliation as the buffered path. Streamed mean *every*
+                # pipeline answer, so skipping it here meant the bucket was only
+                # ever corrected on the probe's non-streamed calls.
+                attempt.rl_headers_raw = st.headers or {}
+                rl = parse_rl_headers(st.headers or {})
+                attempt.retry_after_s = rl["retry_after_s"]
+                self.budget.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
+                self.budget.settle(max_tokens, self.clock.now())
+                self.budget.reconcile(rl.get("remaining_tpm"),
+                                      rl.get("remaining_rpd"), self.clock.now())
                 attempt.outcome = Outcome.OK
                 scope.attempt_end(attempt)
                 if managed:
@@ -333,6 +378,9 @@ class Gateway:
             attempt.tokens_in = usage.get("prompt_tokens")
             attempt.tokens_out = usage.get("completion_tokens")
             self.budget.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
+            # A response has arrived, so this attempt's reservation is no longer in
+            # flight and the header is allowed to speak for it.
+            self.budget.settle(max_tokens, self.clock.now())
             self.budget.reconcile(rl.get("remaining_tpm"), rl.get("remaining_rpd"),
                                   self.clock.now())
 
@@ -379,9 +427,14 @@ class Gateway:
         answering is not late. The role-only frame is a real frame and is stamped as
         `first_delta`, but it is not a first token.
         """
+        captured: dict = {}
+
         async def lines():
             async with self.client.stream("POST", "/chat/completions",
                                           json=payload) as resp:
+                # Snapshot while the response is open: httpx headers are not
+                # guaranteed to outlive the context manager.
+                captured.update(dict(resp.headers))
                 if resp.status_code != 200:
                     await resp.aread()
                     raise _StreamHTTPError(resp.status_code, resp.text)
@@ -389,7 +442,8 @@ class Gateway:
                     yield line
 
         return await consume(lines(), self.clock, t_attempt,
-                             deadline_at=t_start + deadline_s)
+                             deadline_at=t_start + deadline_s,
+                             headers=captured)
 
     def _next_delay(self, attempt, t_start: float, deadline_s: float,
                     attempt_no: int, max_attempts: int,

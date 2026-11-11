@@ -36,6 +36,11 @@ not_a_pair_is_ignored
 
 
 def test_load_env_reads_a_file(tmp_path, monkeypatch):
+    # This is the one module that tests the loader, so it must be able to exercise
+    # it. Safe because every case here passes an explicit path inside tmp_path: an
+    # explicit path cannot reach the developer's real .env. The autouse guard stays
+    # on everywhere else, including the rest of this file.
+    monkeypatch.delenv("RELAY_NO_DOTENV", raising=False)
     f = tmp_path / ".env"
     f.write_text("RELAY_TEST_KEY=from_file\n")
     monkeypatch.delenv("RELAY_TEST_KEY", raising=False)
@@ -46,6 +51,7 @@ def test_load_env_reads_a_file(tmp_path, monkeypatch):
 
 def test_existing_environment_wins(tmp_path, monkeypatch):
     """An exported key must not be silently overridden by a stale .env."""
+    monkeypatch.delenv("RELAY_NO_DOTENV", raising=False)
     f = tmp_path / ".env"
     f.write_text("RELAY_TEST_KEY=from_file\n")
     monkeypatch.setenv("RELAY_TEST_KEY", "from_env")
@@ -70,14 +76,13 @@ def test_example_file_lists_the_keys_the_probe_needs():
     assert "GROQ_BASE_URL" in text
 
 
-def test_probe_error_text_mentions_both_routes(monkeypatch, capsys):
+def test_probe_error_text_mentions_both_routes(capsys):
     """The message must match what the code actually does: export OR .env."""
     import scripts.probe as probe
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    monkeypatch.setattr(probe, "load_env", lambda *a, **k: None)
-    # --timeout is validated before credentials, so it must be supplied for the
-    # credential path to be reached at all.
-    rc = probe.main(["--go", "--max-tokens-total", "1000", "--timeout", "30"])
+    # `--env ""` resolves configuration against an empty mapping, so the message is
+    # produced no matter what is in the process environment or in a real .env.
+    rc = probe.main(["--go", "--max-tokens-total", "1000", "--timeout", "30",
+                     "--env", ""])
     err = capsys.readouterr().err
     assert rc == 2
     assert "GROQ_API_KEY is not set" in err

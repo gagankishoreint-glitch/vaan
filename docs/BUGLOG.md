@@ -367,3 +367,60 @@ failing condition named. The estimate is replaced by the first real
 `usage.prompt_tokens`.
 **Lesson.** "Which of these two numbers is closer" is not a test when both are
 unvalidated and the measurement may be zero.
+
+## BUG-023 · probe · an aborted run was charged and recorded nowhere
+**Cause.** `main()` did `except CeilingReached: return 1` above the block that writes
+`docs/TOKEN_LEDGER.md`. Every path that returned early — ceiling abort, exception —
+skipped the write, so tokens taken from a finite daily budget left no trace. The
+ceilings exist to protect a ~200K-token day; a ceiling that silently loses spend
+makes the budget unaccountable exactly when it matters most.
+**Fix.** The ledger write moved into a `finally`. The abort reason and exit code are
+computed before the return and stamped onto the row (`abort`, `label="aborted: …"`),
+so an aborted run is visible as aborted rather than looking like a short successful
+one. Regression test drives the abort through a fake transport and asserts the charge
+lands.
+**Second bug found by the fix.** `Ledger.__init__(self, path=LEDGER_PATH)` bound the
+path as a *default argument*, evaluated once at class definition. Patching the module
+constant in a test therefore did nothing and the test wrote **234 fictional tokens to
+the real ledger**. Default is now `None`, resolved at call time, and an autouse guard
+in `tests/conftest.py` redirects the path for every test.
+**Lesson.** A budget ledger must be written in a `finally`, and a constant used as a
+default argument is not configurable.
+
+## BUG-024 · tests · a unit test spent real Groq tokens
+**Cause.** `test_go_without_key_exits_2` deleted `GROQ_API_KEY` and ran `main()`. The
+probe then called `load_env()`, which read the developer's real `.env` and put a real
+key straight back into `os.environ`. The "no key" test ran the probe for real: 117
+tokens were charged (`runs/probe_20261111T064821Z`). Absence of a credential was
+being treated as a safety mechanism, but the credential was only absent from the
+process environment — not from disk.
+**Fix.** Three layers, because one was clearly not enough. (1) `RELAY_NO_DOTENV=1`
+disarms the loader, set by an autouse fixture for the whole suite. (2) An autouse
+guard fails any test that opens a socket to a non-localhost host, so a future leak
+fails loudly instead of spending money. (3) The probe takes `--env K=V,…` and
+resolves its key and base URL against that mapping, making the "no key" path testable
+with no environment at all.
+**Proof.** With a real `.env` present in the repo, `pytest -q` twice: 278 passed both
+times, `sha256(docs/TOKEN_LEDGER.md)` identical before and after
+(`ec97edd0…33cc63`), zero files under `runs/` modified. The guard was verified to
+fail a direct `socket.connect(("api.groq.com", 443))` and an `httpx.get` to the same
+host while still permitting `127.0.0.1:8009`.
+**Lesson.** Tests that run production entry points need the network denied, not just
+credentials withheld.
+
+## BUG-025 · gateway · the busiest code path ignored rate-limit headers
+**Cause.** `consume()` parsed SSE frames and threw away the HTTP response headers, so
+`_streamed_call` never called `learn_limits`/`reconcile`. Every pipeline answer is
+streamed, so the local bucket was reconciled only on the probe's non-streamed calls —
+the gateway's rate-limit behaviour depended on which function happened to be running.
+**Fix.** `consume()` takes the headers and returns them on `StreamTimings`; the
+streamed branch reconciles exactly as the buffered branch does. `Budget.reconcile` now
+moves in both directions (capped by `tpm_used_floor`) and `settle()` releases a
+reservation when its response arrives.
+**Proof the test catches it.** With the streamed reconciliation removed the (m) test
+fails as `relay.gateway.gateway.DeadlineExceeded: local TPM budget exhausted: 7700+350 > 8000`
+after 25 answers whose provider-reported window was still full. Restored: `4 passed`.
+**Side finding.** The two new tests passed alone and failed in the suite with
+`RuntimeError: There is no current event loop` — `asyncio.get_event_loop()` is
+deprecated and does not survive another test closing the loop. `asyncio.run` fixes it.
+**Lesson.** A test that only passes when run alone is not passing.

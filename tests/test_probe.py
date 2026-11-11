@@ -356,10 +356,19 @@ def test_go_without_timeout_exits_2(capsys):
     assert "timeout" in capsys.readouterr().err
 
 
-def test_go_without_key_exits_2(monkeypatch, capsys):
-    monkeypatch.delenv("GROQ_API_KEY", raising=False)
-    assert main(["--go", "--max-tokens-total", "100", "--timeout", "5"]) == 2
-    assert "GROQ_API_KEY" in capsys.readouterr().err
+def test_go_without_key_exits_2(capsys):
+    """`--go` with no key must exit 2 and say so.
+
+    Deleting the process variable is not enough: on a machine with a real .env the
+    loader put the key straight back and this test made a live 117-token call. The
+    key is therefore resolved against an explicitly empty mapping (`--env ""`), so
+    the test cannot see the process environment, the .env file, or the internet.
+    """
+    rc = main(["--go", "--max-tokens-total", "100", "--timeout", "5", "--env", ""])
+    err = capsys.readouterr().err
+    assert rc == 2
+    assert "GROQ_API_KEY" in err
+    assert "not set" in err
 
 
 def test_dry_run_main_returns_0_and_prints_plan(tmp_path, capsys, monkeypatch):

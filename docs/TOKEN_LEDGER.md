@@ -32,7 +32,17 @@ The runner refuses to send when today's plan is exhausted.
 
 | # | Date | Phase | Script | Purpose | Est. tokens | Actual tokens | Console reconciliation |
 |---|---|---|---|---|---|---|---|
-| – | – | – | – | no real runs yet (P0 touches no API) | 0 | 0 | n/a |
+| 1 | 2026-11-11 | P1 | `scripts/probe.py` | **accidental**: `test_go_without_key_exits_2` reached the real API through a developer `.env` (BUG-024) | 0 | **117** | not reconciled against the console; header-only |
+
+**Total real tokens charged so far: 117.** This row is a backfill: the run happened at
+`2026-11-11T06:48:21Z` in `runs/probe_20261111T064821Z` and was recorded nowhere,
+because the ledger write sat after an early `return` (BUG-023). It is recorded now, in
+`finally`, and labelled so that it is never mistaken for a planned measurement.
+
+> **Still missing from this table: the supervisor's 351-token probe session**, which
+> they reported on their own machine. This workspace copy has no row for it and no
+> `runs/` directory for it, so it cannot be backfilled from evidence here — only from
+> their console usage page. Expected dashboard total once merged: **117 + 351 = 468**.
 
 ## Stand-in runs (free)
 
@@ -51,3 +61,31 @@ The runner refuses to send when today's plan is exhausted.
 | Reserve | 5% | Re-runs after a bug |
 
 The reserve exists because BUG-001 and BUG-002 both needed a re-run. Assume it will be used.
+
+<!-- LEDGER:DATA -->
+```json
+{
+  "probe_version": 1,
+  "days": [
+    {
+      "date": "2026-11-11",
+      "plan": 0,
+      "cap_tpd_unverified": 200000,
+      "spent": 117
+    }
+  ],
+  "runs": [
+    {
+      "utc": "2026-11-11T06:48:21+00:00",
+      "modes": [
+        "single"
+      ],
+      "tokens": 117,
+      "ceiling": 100,
+      "labelled_source": "runs/probe_20261111T064821Z",
+      "label": "accidental: pytest live call"
+    }
+  ]
+}
+```
+<!-- /LEDGER:DATA -->

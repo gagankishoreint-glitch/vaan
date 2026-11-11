@@ -183,12 +183,15 @@ class Ledger:
     would be fragile; a fenced block cannot drift.
     """
 
-    def __init__(self, path: Path = LEDGER_PATH):
-        self.path = path
+    def __init__(self, path: Optional[Path] = None):
+        # Resolved at call time, not import time: a default of `LEDGER_PATH` binds
+        # the value when the class is defined, so patching the module constant in a
+        # test silently had no effect and the test wrote to the real ledger.
+        self.path = Path(path) if path is not None else LEDGER_PATH
         self._lock = threading.Lock()
         self.days: list[DayEntry] = []
         self.rows: list[dict] = []
-        if path.is_file():
+        if self.path.is_file():
             self._read()
 
     def _read(self) -> None:
@@ -974,8 +977,23 @@ def build_parser() -> argparse.ArgumentParser:
                    help="today's token plan; written to the ledger")
     p.add_argument("--config", default="config/relay.yaml")
     p.add_argument("--base-url", default=None)
+    p.add_argument("--env", type=_kv_pairs, default=None, metavar="K=V,K=V",
+                   help="resolve configuration from these pairs instead of the "
+                        "process environment (tests only; the suite must not be "
+                        "able to spend real tokens)")
     p.add_argument("--run-dir", default=None)
     return p
+
+
+def _kv_pairs(text: str) -> dict[str, str]:
+    """`--env A=1,B=2` -> {"A": "1", "B": "2"}. Used to isolate "no key" tests."""
+    out: dict[str, str] = {}
+    for item in text.split(","):
+        if not item.strip():
+            continue
+        key, _, value = item.partition("=")
+        out[key.strip()] = value.strip()
+    return out
 
 
 def resolve_modes(requested: Optional[list[str]]) -> list[str]:
@@ -1012,8 +1030,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     # Load .env BEFORE reading anything from the environment: the old message told
     # the user to create .env and then never read it, so following the instruction
     # did nothing.
-    env_file = load_env()
-    api_key = os.environ.get("GROQ_API_KEY") or None
+    # `--env` lets a caller (in practice, the test suite) resolve configuration
+    # against a mapping it owns instead of the process environment. Without it the
+    # "no key" branch could not be tested on a machine with a real .env: the loader
+    # would put the developer's own key back and the test would spend real tokens.
+    environ = dict(os.environ) if getattr(args, "env", None) is None else dict(args.env)
+    env_file = load_env(environ=environ)
+    api_key = environ.get("GROQ_API_KEY") or None
     if args.go and not api_key:
         looked = f"looked for {env_file}" if env_file else (
             "no .env file found in the working directory or the repo root")
@@ -1026,7 +1049,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             file=sys.stderr)
         return 2
 
-    base_url = args.base_url or os.environ.get("GROQ_BASE_URL") or ""
+    base_url = args.base_url or environ.get("GROQ_BASE_URL") or ""
     if args.go and not base_url:
         print("error: GROQ_BASE_URL is not set.", file=sys.stderr)
         return 2
@@ -1087,6 +1110,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     started = now_mono()
     spent_before = ceiling.spent
+    exit_code = 0
+    abort_reason: Optional[str] = None
     try:
         for mode in modes:
             print(f"\n=== {mode} ===")
@@ -1119,34 +1144,52 @@ def main(argv: Optional[list[str]] = None) -> int:
                 probe.plan_lines.clear()
             else:
                 probe.report_mode(mode)
+        exit_code = 0
     except CeilingReached as e:
         print(f"\nABORT: {e}", file=sys.stderr)
-        return 1
+        abort_reason = f"aborted at ceiling: {e}"
+        exit_code = 1
     except KeyboardInterrupt:
         print("\ninterrupted", file=sys.stderr)
-        return 130
+        abort_reason = "interrupted by the user"
+        exit_code = 130
     finally:
+        # The ledger is written HERE, in a finally, not after the try.
+        #
+        # It used to be written only after the try/except block, so every early
+        # `return` skipped it -- and an abort at the ceiling is exactly the case
+        # where tokens have already been charged. A real run charged 117 tokens,
+        # aborted at cap 100, and left no trace in the ledger (BUG-023). The rule is
+        # absolute: any run that charged tokens is recorded, however it ended.
         probe.close()
+        spent = ceiling.spent
+        elapsed = now_mono() - started
+        print("\n=== session ===")
+        print(f"  tokens charged  {spent} (before={spent_before})")
+        print(f"  ceiling         {args.max_tokens_total if args.max_tokens_total else '(dry run)'}")
+        print(f"  elapsed         {elapsed:.1f}s")
 
-    spent = ceiling.spent
-    elapsed = now_mono() - started
-    print(f"\n=== session ===")
-    print(f"  tokens charged  {spent} (before={spent_before})")
-    print(f"  ceiling         {args.max_tokens_total if args.max_tokens_total else '(dry run)'}")
-    print(f"  elapsed         {elapsed:.1f}s")
+        if not dry_run and spent > 0:
+            row = {
+                "utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "modes": modes,
+                "tokens": spent,
+                "ceiling": args.max_tokens_total,
+            }
+            if abort_reason:
+                # An aborted run is recorded precisely because it is the one most
+                # likely to be forgotten, and its cost is real.
+                row["abort"] = abort_reason
+                row["label"] = f"aborted: {abort_reason.split(':')[0]}"
+            ledger.spend(spent, row=row)
+            ledger.save()
+            print(f"  ledger          docs/TOKEN_LEDGER.md updated (+{spent})")
+            if abort_reason:
+                print(f"  ledger note     recorded as ABORTED ({abort_reason})")
+        else:
+            print("  ledger          not written (dry run or zero spend)")
 
-    if not dry_run and spent > 0:
-        ledger.spend(spent, row={
-            "utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "modes": modes,
-            "tokens": spent,
-            "ceiling": args.max_tokens_total,
-        })
-        ledger.save()
-        print(f"  ledger          docs/TOKEN_LEDGER.md updated (+{spent})")
-    else:
-        print("  ledger          not written (dry run or zero spend)")
-    return 0
+    return exit_code
 
 
 if __name__ == "__main__":

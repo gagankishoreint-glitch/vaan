@@ -692,3 +692,102 @@ def test_equal_budget_does_not_favour_larger_chunks():
     assert e9["recall_at_k"] >= e12["recall_at_k"], (
         f"equal-budget recall favours 1200/200 ({e12['recall_at_k']:.2f} vs "
         f"{e9['recall_at_k']:.2f}); either the corpus changed or the confound is back")
+
+
+# ------------------------------------------------- (m) budget reconciliation
+
+def _stream_transport(remaining_tokens: int, limit_tokens: int = 8000):
+    """A transport that answers with an SSE stream and real rate-limit headers."""
+    import httpx
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        chunks = [
+            'data: {"choices":[{"delta":{"role":"assistant"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"the"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":" answer"}}],'
+            '"usage":{"prompt_tokens":100,"completion_tokens":20}}\n\n',
+            "data: [DONE]\n\n",
+        ]
+        return httpx.Response(
+            200, content="".join(chunks).encode(),
+            headers={"content-type": "text/event-stream",
+                     "x-ratelimit-limit-tokens": str(limit_tokens),
+                     "x-ratelimit-remaining-tokens": str(remaining_tokens),
+                     "x-ratelimit-limit-requests": "1000",
+                     "x-ratelimit-remaining-requests": "999"})
+
+    return httpx.MockTransport(handler)
+
+
+def _gw(transport, tpm: int, run_dir):
+    import httpx
+    from pathlib import Path
+    from relay.config import load_config
+    from relay.clock import FakeClock
+    from relay.events import EventLog
+    from relay.gateway.gateway import Gateway
+
+    cfg = load_config(Path("config/relay.yaml"))
+    clock = FakeClock()
+    log = EventLog(str(run_dir), run_id="m", backend="standin")
+    return Gateway.from_config(
+        cfg, clock, log, base_url="https://groq.test/openai/v1", api_key="k",
+        client=httpx.AsyncClient(transport=transport,
+                                 base_url="https://groq.test/openai/v1")), clock
+
+
+def test_streamed_answers_reconcile_the_bucket_from_the_header(tmp_path):
+    """(m) Streamed responses must reconcile; they used to discard the headers.
+
+    The pipeline streams every answer, so before this the local bucket was only ever
+    corrected during the probe's non-streamed calls. A gateway that ignores its own
+    busiest path is not rate-limit aware; it just happens to look it.
+    """
+    import asyncio
+    from relay.events import RequestScope
+
+    gw, clock = _gw(_stream_transport(remaining_tokens=4000), tpm=8000,
+                    run_dir=tmp_path)
+    gw.budget.take(1000, now=clock.now())      # a prior call in the same window
+    req = RequestScope(gw.log, "r-m")
+
+    async def go():
+        return await gw.call(scope=req, step="0", model="m", messages=[{"role": "user",
+                                "content": "hi"}], max_tokens=200, deadline_s=5.0,
+                             stream=True)
+
+    asyncio.run(go())
+    # Header says half the provider's window is used -> half of OUR limit.
+    assert gw.budget.provider_limit_tpm == 8000
+    assert gw.budget.tpm_used == 4000, gw.budget.tpm_used
+
+
+def test_a_short_answer_does_not_ratchet_the_bucket_shut(tmp_path):
+    """(m) The failure this actually prevents.
+
+    The gateway reserves prompt+cap at admission but the provider charges what it
+    used. Reserving 400 of an 8000 window per answer and never releasing the
+    difference closes the bucket after 20 short answers while the provider still has
+    thousands of tokens free. Header-first reconciliation releases it.
+    """
+    import asyncio
+    from relay.events import RequestScope
+
+    gw, clock = _gw(_stream_transport(remaining_tokens=8000), tpm=8000,
+                    run_dir=tmp_path)
+
+    async def one():
+        req = RequestScope(gw.log, f"r-{gw.budget.rpd_used}")
+        await gw.call(scope=req, step="0", model="m",
+                      messages=[{"role": "user", "content": "hi"}],
+                      max_tokens=350, deadline_s=5.0, stream=True)
+
+    for _ in range(25):
+        asyncio.run(one())
+        clock.advance(1.0)
+
+    assert gw.budget.tpm_used == 0, (
+        "provider reports a full window but the local bucket has "
+        f"{gw.budget.tpm_used} of {gw.budget.tpm} spent -- reserved caps were never "
+        "released")
+    gw.budget.take(8000, now=clock.now())      # the whole window is still usable

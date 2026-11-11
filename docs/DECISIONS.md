@@ -164,3 +164,47 @@ argmin of a sweep over 27 questions is fitting to noise; the fix is a larger eva
 set, not a better threshold.
 **Rules out.** Treating the BM25 score as the safety mechanism.
 **Re-open at P10.** If a reranker improves separation, the gate can tighten.
+
+### D-016 · 2026-11-11 · P5 · The local bucket mirrors the header in both directions
+**Decision.** `Budget` reserves `max_tokens` at admission and then, when any response
+arrives, hands the reservation back (`settle`) and adopts the provider's own view of
+the window from `x-ratelimit-remaining-tokens` (`reconcile`) — upward as well as
+downward.
+
+**What the gateway did before this, stated plainly, because the question deserved a
+precise answer.** It reserved prompt+cap at admission and never refunded locally. The
+only correction was `reconcile`, which moved the bucket **downward only**
+(`max(tpm_used, provider_used)`). Two consequences followed:
+
+1. A short answer left the difference between its reservation and its real cost in the
+   local bucket until the window rolled over. Twenty-five answers reserving 350
+   against a 20-token actual cost closed an 8000-token window while the provider still
+   reported the window empty. The gateway would throttle itself against a limit nobody
+   was hitting. The test that now catches this fails with
+   `local TPM budget exhausted: 7700+350 > 8000` after the provider has repeatedly said
+   the bucket is full.
+2. The streamed path — which is **every answer the pipeline sends** — never reconciled
+   at all. `consume()` discarded the response headers, so the bucket was learned and
+   corrected only on the probe's non-streamed calls. The rate-limit behaviour therefore
+   depended on which code path happened to be used.
+
+**Why upward is safe now.** `tpm_used_floor` holds the tokens taken in the current
+window that no response has yet accounted for; `reconcile` cannot move the bucket below
+it, so a header read can never forget an in-flight reservation. `settle` drops the
+floor by exactly what the arriving response reserved. The floor is clamped at zero so
+out-of-order settlement is harmless: too low only lets the header speak.
+
+**What this does NOT decide.** Whether Groq refunds the unused part of the cap is still
+unproven (n=2, and the two models fit equally well — see Q-06b and the pending A/B).
+This design does not need that answer: it copies the header instead of predicting it,
+and it adds no refund of its own on top. If Groq does not refund, the header will not
+move and the local bucket will not move either. If it does, both move together.
+
+**Rules out.** Reconstructing usage from `remaining` against *our* limit (BUG-010,
+units mismatch); moving only downward; trusting the header across a window rollover;
+and any second, independent refund calculation layered on top of the header.
+
+**Re-open if.** The A/B shows the header is not refreshed per response — then
+reconciliation must be rate-limited to the reset interval rather than per call.
+**Run it.** `python -m pytest -q tests/test_p4_p6.py -k "reconcile or ratchet"` →
+`2 passed`.

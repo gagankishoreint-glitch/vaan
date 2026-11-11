@@ -21,12 +21,21 @@ for one command must not have it silently overridden by a stale .env file.
 
     load_env()                      # .env in cwd, then next to the repo root
     load_env("/path/to/.env")       # explicit
+
+Set `RELAY_NO_DOTENV=1` to disarm the loader entirely. That exists for the test suite:
+a developer machine with a real .env full of credentials must not be able to turn a
+unit test into a live API call. Tests are about code, not about whichever secrets
+happen to be sitting next to the checkout.
+
+    python -m pytest -q tests/test_env.py                    -> 7 passed
+    RELAY_NO_DOTENV=1 python -c "from relay.env import load_env; print(load_env())"
+                                                             -> None, .env or not
 """
 from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Iterable, Mapping, MutableMapping, Optional
 
 
 def parse_env_text(text: str) -> dict[str, str]:
@@ -55,6 +64,16 @@ def parse_env_text(text: str) -> dict[str, str]:
     return out
 
 
+def dotenv_disabled() -> bool:
+    """True when RELAY_NO_DOTENV is set to a truthy value.
+
+    Read from the live environment on every call rather than cached at import: a test
+    that sets the flag must take effect even though relay.env was imported long ago.
+    """
+    return os.environ.get("RELAY_NO_DOTENV", "").strip().lower() in (
+        "1", "true", "yes", "on")
+
+
 def find_env_file(start: Optional[Path] = None,
                   extra: Iterable[Path] = ()) -> Optional[Path]:
     """First existing .env: cwd, then this repo's root, then any `extra` paths."""
@@ -66,17 +85,26 @@ def find_env_file(start: Optional[Path] = None,
     return None
 
 
-def load_env(path: Optional[str | Path] = None, *, override: bool = False
+def load_env(path: Optional[str | Path] = None, *, override: bool = False,
+             environ: Optional[MutableMapping[str, str]] = None
              ) -> Optional[Path]:
-    """Load .env into os.environ. Returns the file used, or None if none found.
+    """Load .env into `environ` (default os.environ). Returns file used or None.
 
     `override=False` (the default, and what every script should use) keeps any
     variable that is already set.
+
+    `environ` is injectable so callers can resolve configuration against a mapping
+    they own. `scripts/probe.py` uses it to answer "is there a key?" against a dict
+    the caller supplied, which makes that path testable without the process
+    environment -- and therefore without a real key -- ever being consulted.
     """
+    if dotenv_disabled():
+        return None
+    target = os.environ if environ is None else environ
     env_file = Path(path) if path else find_env_file()
     if env_file is None or not env_file.is_file():
         return None
     for key, value in parse_env_text(env_file.read_text(encoding="utf-8")).items():
-        if override or key not in os.environ:
-            os.environ[key] = value
+        if override or key not in target:
+            target[key] = value
     return env_file

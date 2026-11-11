@@ -33,6 +33,12 @@ class StreamTimings:
     content_parts: list[str] = field(default_factory=list)
     usage: Optional[dict] = None
     n_deltas: int = 0
+    #: Rate-limit headers as received. The streamed path used to drop these on the
+    #: floor, so streamed attempts -- which is every answer the pipeline sends --
+    #: never reconciled the local bucket with the provider's view at all, and never
+    #: learned the provider's real limits. Non-streaming requests did. That made the
+    #: gateway's rate-limit behaviour depend on which code path happened to be used.
+    headers: Optional[dict] = None
 
     @property
     def text(self) -> str:
@@ -81,7 +87,8 @@ def usage_from(frame: dict) -> Optional[dict]:
 
 
 async def consume(lines: AsyncIterator[str], clock, t_sent: float,
-                  deadline_at: Optional[float] = None) -> StreamTimings:
+                  deadline_at: Optional[float] = None,
+                  headers: Optional[dict] = None) -> StreamTimings:
     """Read an SSE line iterator, stamping each frame AS IT ARRIVES.
 
     Stamping at arrival is the whole point. An earlier version buffered frames
@@ -95,7 +102,7 @@ async def consume(lines: AsyncIterator[str], clock, t_sent: float,
     failed, while one that has started answering is merely slow and is allowed to
     finish.
     """
-    st = StreamTimings(t_sent=t_sent)
+    st = StreamTimings(t_sent=t_sent, headers=headers)
     async for raw in lines:
         now = clock.now()
         frame = parse_sse_line(raw)
