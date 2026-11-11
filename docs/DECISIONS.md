@@ -153,9 +153,14 @@ has stopped meaning anything.
 ### D-015 · 2026-11-11 · P6 · the evidence gate is permissive on purpose
 **Decision.** `retrieval.gate_threshold: 15.86` is committed and the gate admits
 when top-1 >= it. It is deliberately not tuned to minimise false-answers.
-**Why.** P3 measured that no single BM25 threshold separates answerable from
-unanswerable (26% false-abstain and 12.5% false-answer at the same point). A strict
-gate would refuse real questions; a loose one is safe *because* `verify.py` enforces
-H1 afterwards. Verification is the guarantee; the gate is only a cost control.
+**Why.** The P3 threshold sweep evaluates every achievable operating point across
+19 answerable and 8 unanswerable questions, and finds **no threshold with both
+errors at zero**; the best point (14.82) still misclassifies 4 of 27. A strict gate
+would refuse real questions at a measured rate. The gate can therefore only be a
+cost control, never a correctness mechanism: H1 is guaranteed by `verify.py`
+afterwards. Verification is the guarantee; the gate decides how often it is needed.
+**Not tuned to 14.82.** The improvement over 15.86 is one question on n=27 —
+inside sampling noise. Fitting to it would be fitting to noise; the point stays at
+the value derived before the sweep was run.
 **Rules out.** Treating the BM25 score as the safety mechanism.
 **Re-open at P10.** If a reranker improves separation, the gate can tighten.

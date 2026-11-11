@@ -28,17 +28,39 @@ top. That matters more than raw recall because `top_k=4` and the gate reads top-
 | numeric/table | 3/4 | **the contamination risk did not bite at chunk level** |
 | cross-paper | 1/4 | **the clear weakness** |
 
-## The finding that matters: the score cannot separate classes
+## The finding that matters: the gate cannot be perfect, and the sweep says by how much
 
-At the measured threshold (15.86 = 25th percentile of answerable top-1 scores),
-**26.3% of answerable questions are refused and 12.5% of unanswerable ones are
-accepted.** A single BM25-score threshold is not a usable evidence gate in either
-direction. This is a limitation to report, not a parameter to tune: there is no
-threshold that fixes both simultaneously, because the two distributions overlap.
+`python -m scripts.retrieval_eval --sweep-setting 900/150` evaluates **every**
+achievable threshold (n_answerable=19, n_unanswerable=8, k=4):
 
-**Consequence for P6: the gate is deliberately permissive** (it admits, then
-verification catches bad answers) rather than strict. H1 is enforced by
-`verify.py`, not by the gate.
+| threshold | false abstain | false answer | total errors |
+|---|---|---|---|
+| 8.82 | 0/19 | 7/8 | 7 |
+| 11.77 | 0/19 | 6/8 | 6 |
+| 12.92 | 1/19 | 4/8 | 5 |
+| **14.82** | **2/19** | **2/8** | **4** |
+| 15.86 (committed) | 4/19 | 1/8 | 5 |
+| 17.28 | 7/19 | 0/8 | 7 |
+| 22.30 | 14/19 | 0/8 | 14 |
+
+**Thresholds at which both errors are zero: 0.** The two distributions
+interpenetrate — the highest-scoring unanswerable question (17.28) outscores
+**7 of 19** answerable ones. So the claim supported by the sweep is:
+
+> No single BM25 top-1 threshold admits all 19 answerable questions while
+> refusing all 8 unanswerable ones. The best achievable operating point (14.82)
+> misclassifies 4 of 27 questions: 2 answerable refused, 2 unanswerable admitted.
+
+That is a real limitation but **not** the stronger claim I made earlier ("a single
+threshold is not usable in either direction"). The gate is usable; it is simply
+incapable of being correct. At its best point it is wrong on 4 of 27 questions,
+which is why verification, not the gate, has to enforce H1.
+
+**Caveat on the exact number.** n=27. The difference between the best point
+(4 errors) and the committed 15.86 (5 errors) is **one question** — well inside
+sampling noise. The committed threshold was not changed to 14.82 because the sweep
+cannot distinguish them on this sample; changing it would be fitting to noise.
+The report must say the operating point is known only to ±1 question.
 
 ## The eval-set bug I found in my own data
 
