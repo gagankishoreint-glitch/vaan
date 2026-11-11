@@ -11,31 +11,48 @@ Any of these being wrong only affects classification, never safety: an unclassif
 """
 from __future__ import annotations
 
+import math
 import re
 from typing import Mapping, Optional
 
-_TOKEN = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s|d)")
-_FULL = re.compile(r"(?:\d+(?:\.\d+)?(?:ms|h|m|s|d))+")
+# ASCII only: without re.ASCII, \d also matches non-ASCII digits such as "\u0665",
+# which float() happily accepts. Narrowing the alphabet keeps the parser predictable.
+_TOKEN = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s|d)", re.ASCII)
+_FULL = re.compile(r"(?:\d+(?:\.\d+)?(?:ms|h|m|s|d))+", re.ASCII)
+# Plain seconds, e.g. `retry-after: 2`. Deliberately NOT float(): float() accepts
+# "nan", "inf", "-5", "1e5" and "Infinity", and an inf or nan retry-after would
+# poison every deadline comparison downstream (BUG-003).
+_PLAIN = re.compile(r"\d+(?:\.\d+)?", re.ASCII)
 _UNIT = {"ms": 0.001, "s": 1.0, "m": 60.0, "h": 3600.0, "d": 86400.0}
+
+
+def _duration(value: float) -> Optional[float]:
+    """Reject anything that is not a finite, non-negative number of seconds.
+
+    Defence in depth: even if a future edit loosens a regex, nan/inf/negative
+    values cannot leave this function.
+    """
+    if not math.isfinite(value) or value < 0.0:
+        return None
+    return value
 
 
 def parse_duration(raw: Optional[str]) -> Optional[float]:
     """'7.66s'->7.66, '2m59.56s'->179.56, '150ms'->0.15, '1h2m3s'->3723, '2'->2.0.
 
-    Returns None if unparseable (caller keeps the raw string).
+    Returns None if unparseable (caller keeps the raw string). Never returns
+    nan, inf or a negative number: those are unparseable, not values.
     """
     if raw is None:
         return None
     s = raw.strip().lower()
     if not s:
         return None
-    try:
-        return float(s)                  # plain seconds, e.g. retry-after
-    except ValueError:
-        pass
+    if _PLAIN.fullmatch(s):              # plain seconds, e.g. retry-after: 2
+        return _duration(float(s))
     if not _FULL.fullmatch(s):
         return None
-    return sum(float(n) * _UNIT[u] for n, u in _TOKEN.findall(s))
+    return _duration(sum(float(n) * _UNIT[u] for n, u in _TOKEN.findall(s)))
 
 
 def _int(raw: Optional[str]) -> Optional[int]:

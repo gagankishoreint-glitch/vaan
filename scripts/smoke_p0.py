@@ -47,8 +47,10 @@ def broken_request(log: EventLog, req_id: str) -> None:
     bug class a future layer could introduce by holding a stale scope.
     """
     log.emit("request.start", req_id=req_id)
-    log.emit("terminal", req_id=req_id, terminal="passages_only", reply_type="passages_only")
-    log.emit("attempt.start", req_id=req_id, attempt_id=f"{req_id}-late")
+    log.emit("terminal", req_id=req_id, terminal="passages_only",
+             reply_type="passages_only")
+    log.emit("attempt.start", req_id=req_id, attempt_id=f"{req_id}-late",
+             attempt_backend="groq", backend="spoofed")   # envelope owns `backend`
     log.emit("terminal", req_id=req_id, terminal="busy", reply_type="busy")
 
 

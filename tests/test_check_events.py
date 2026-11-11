@@ -19,8 +19,10 @@ def ok_request(req="q1", reply="verified_answer", **extra):
     """A healthy request: start, one attempt, end, one terminal."""
     return [
         {"type": "request.start", "req_id": req, "t_mono": 0.0},
-        {"type": "attempt.start", "req_id": req, "t_mono": 0.1},
-        {"type": "attempt.end", "req_id": req, "t_mono": 0.5, "tokens_out": 12},
+        {"type": "attempt.start", "req_id": req, "t_mono": 0.1,
+         "backend": "standin", "attempt_backend": "standin"},
+        {"type": "attempt.end", "req_id": req, "t_mono": 0.5, "tokens_out": 12,
+         "backend": "standin", "attempt_backend": "standin"},
         {"type": "request.end", "req_id": req, "t_mono": 0.6,
          "total_elapsed_s": 0.6, "waiting_s": 0.1, "working_s": 0.5, "retrying_s": 0.0},
         {"type": "terminal", "req_id": req, "terminal": reply, "t_mono": 0.7, **extra},
@@ -131,3 +133,92 @@ def test_corrupt_json_line_raises(tmp_path):
     from scripts.check_events import _load
     with pytest.raises(ValueError, match="corrupt JSON"):
         _load(p)
+
+
+# ------------------------------------------- I7/I8 backend declaration (D-011)
+
+def _run(declared="standin", attempts=("standin",), with_run_end=True,
+         run_end_counts=None):
+    """Build a one-request run with a declared backend and given attempt backends."""
+    evs = [{"type": "run.start", "backend": declared, "t_mono": 0.0}]
+    evs += [{"type": "request.start", "req_id": "q1", "backend": declared, "t_mono": 0.01}]
+    n = len(attempts)
+    step = 0.5 / max(1, n)
+    for i, ab in enumerate(attempts):
+        t0 = 0.1 + i * step
+        evs.append({"type": "attempt.start", "req_id": "q1", "t_mono": t0,
+                    "backend": declared, "attempt_backend": ab})
+        evs.append({"type": "attempt.end", "req_id": "q1", "t_mono": t0 + step / 2,
+                    "backend": declared, "attempt_backend": ab, "tokens_out": 1})
+    evs.append({"type": "request.end", "req_id": "q1", "t_mono": 0.9,
+                "total_elapsed_s": 0.89, "waiting_s": 0.09, "working_s": 0.8,
+                "retrying_s": 0.0, "backend": declared})
+    evs.append({"type": "terminal", "req_id": "q1", "terminal": "answered",
+                "t_mono": 0.95, "reply_type": "verified_answer", "backend": declared})
+    if with_run_end:
+        counts = run_end_counts if run_end_counts is not None else {
+            b: attempts.count(b) for b in set(attempts)}
+        evs.append({"type": "run.end", "backend": declared, "t_mono": 1.0,
+                    "attempt_backend_counts": counts})
+    return evs
+
+
+def test_consistent_declared_run_passes():
+    assert check(_run("standin", ("standin",))).ok
+
+
+def test_declared_groq_served_by_standin_is_caught():
+    """The contradiction a computed label could never detect: the run CLAIMS groq
+    but every attempt was served by the stand-in."""
+    rep = check(_run("groq", ("standin",)))
+    assert "I7_backend_scope" in {v.invariant for v in rep.violations}
+    assert "I8_run_end" in {v.invariant for v in rep.violations}
+
+
+def test_declared_mixed_allows_any_attempt_backends():
+    assert check(_run("mixed", ("groq", "standin"))).ok
+
+
+def test_deliberate_failover_is_allowed_not_flagged_as_mixed_escape():
+    """A failover inside a `standin` run is a real contradiction and must be
+    flagged -- the old 'mixed escape hatch' computed from the attempts hid this."""
+    rep = check(_run("standin", ("groq", "standin")))
+    assert any(v.invariant == "I7_backend_scope" for v in rep.violations)
+
+
+def test_invalid_declaration_is_caught():
+    rep = check(_run("Groq", ("groq",)))
+    assert any(v.invariant == "I7_backend_scope" for v in rep.violations)
+
+
+def test_missing_attempt_backend_fails():
+    evs = _run()
+    del evs[2]["attempt_backend"]
+    assert "I7_backend_scope" in {v.invariant for v in check(evs).violations}
+
+
+def test_run_end_counts_mismatch_fails():
+    """Lost attempt events show up as a count mismatch rather than silently."""
+    rep = check(_run("standin", ("standin",), run_end_counts={"standin": 5}))
+    assert "I8_run_end" in {v.invariant for v in rep.violations}
+
+
+def test_double_run_end_fails():
+    evs = _run()
+    evs.append({"type": "run.end", "backend": "standin", "t_mono": 1.1,
+                "attempt_backend_counts": {"standin": 1}})
+    assert "I8_run_end" in {v.invariant for v in check(evs).violations}
+
+
+def test_no_run_end_is_not_a_violation():
+    """A crashed run has no run.end; that is reported elsewhere, not as a violation."""
+    assert check(_run(with_run_end=False)).ok
+
+
+# ------------------------------------------------ legacy P0 artefacts
+
+def test_artifact_without_attempt_backend_is_flagged():
+    evs = ok_request()
+    for e in evs:
+        e.pop("attempt_backend", None)
+    assert "I7_backend_scope" in {v.invariant for v in check(evs).violations}

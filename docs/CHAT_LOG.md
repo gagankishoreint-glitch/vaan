@@ -49,3 +49,34 @@ non-goals) are the two answers that change what P5 and P8 build.
 **Next.** P1 probe: 19 questions, one script, artifacts under `runs/probe_*`. I will not write
 the probe runner until you say the ledger allocation in `docs/TOKEN_LEDGER.md` is acceptable,
 because the probe is the first thing that spends real tokens.
+
+---
+
+## 2026-11-11 · P0 close-out + P1 probe
+
+**Supervisor corrections to my P0 spec.** Two real spec bugs, both mine: `parse_duration`
+accepted `nan`/`inf`/`-5`/`1e5` via bare `float()` (BUG-003), and `EventLog.emit` let a
+caller field silently overwrite the envelope (BUG-004). The second one surfaced a third,
+worse bug (BUG-005): `backend` meant both run scope and attempt scope, so the
+per-attempt value was being clobbered — the one field the managed-vs-naive comparison
+groups by. Supervisor decided the fix (D-008); I implemented it as majority-with-tie-break
+rather than literal first, and flagged the deviation.
+
+**Supervisor corrections to my questions.** `Chunk.title` stays out (registry it is);
+`patience_s` is an assumption and must be labelled as one, picked after P1 (~20 s),
+re-run at a second value (~10 s) to show how give-up counts move; non-goals are Redis
+limiter + durable workflow engine; no P5 skeletons early.
+
+**Supervisor corrections to my budget plan.** "10/60/25/5 of an undefined total" was
+right — percentages of nothing. Replaced with per-day caps and an 80% rule. Note the
+arithmetic that already bites: eval needs ~225K at 15 questions x 5K x 3 settings, which
+is more than one 200K day. That is now visible in the ledger table instead of hidden in
+a percentage.
+
+**I cannot do item 2.** No route to `console.groq.com` or `api.groq.com` from this
+environment, and no key. The probe is verified offline (mock transport: 35 tests) and
+must run on the supervisor's machine. `docs/PROBE.md` is the run sheet.
+
+**Found by running the dry run, not by review.** `bigctx` at `--bigctx-repeat 400` is
+~240K tokens at the deliberate over-estimate — 4x the day plan, refused before spending
+(D-010). It is now its own run at `--bigctx-repeat 40`.

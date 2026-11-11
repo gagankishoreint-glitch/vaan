@@ -44,7 +44,9 @@ class Attempt:
     attempt_id: str
     req_id: str
     step: str                  # rewrite | draft | verify | probe
-    backend: str               # groq | standin
+    backend: str               # groq | standin -- the backend for THIS attempt.
+                               # Logged as `attempt_backend`; `backend` on an event
+                               # is run scope (DECISIONS D-008).
     model: str
     t_sent: float
     t_first_byte: Optional[float] = None

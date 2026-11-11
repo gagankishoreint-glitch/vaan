@@ -11,8 +11,10 @@ runs/*/
 !runs/.gitkeep
 
 # Chunk caches are reproducible from the PDFs; do not commit them.
-data/chunks/*.json
-data/chunks/*.jsonl
+# The review_*.md artefacts ARE committed: they are the eyeball evidence the
+# supervisor asked for (10 random chunks per paper, flagged chunks, worst numerics).
+data/chunks/**/*.json
+data/chunks/**/*.jsonl
 !data/chunks/.gitkeep
 
 # Paper PDFs are large binaries delivered with the submission, not committed

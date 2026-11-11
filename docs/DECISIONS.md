@@ -69,3 +69,74 @@ an unparseable 429 stays `RATE_LIMITED_UNKNOWN` rather than being guessed into a
 "unknown", never to "safe to retry".
 **Rules out.** Retry decisions that depend on a parsed `retry-after` when it did not parse.
 **Re-open at P1.** The probe in `docs/OPEN_QUESTIONS.md` replaces every claim with an observation.
+
+### D-008 · 2026-11-11 · P0 · `backend` is run scope, `attempt_backend` is attempt scope
+**Decision.** The event envelope keeps `backend` = the run's backend. Attempt events carry
+`attempt_backend` = the backend that served that attempt. A terminal event carries
+`primary_backend` = majority of attempts, ties to first appearance.
+**Why.** A new reserved-field guard (BUG-004) revealed that both meanings had been sharing
+one key, so the per-attempt value was silently lost (BUG-005). The supervisor chose
+"envelope wins, rename the attempt field" and "primary" for mixed runs.
+**Deviation, flagged.** "Primary" is implemented as *majority with first-appearance
+tie-break*, not literally the first attempt. Literal first is a race under concurrency and
+mislabels a request that failed over. Revert to strict-first on request.
+**Rules out.** Run-level `backend` meaning "the backend of the first attempt".
+**Re-open if.** A run is defined as single-backend by construction (then `mixed` disappears
+and the envelope field is redundant).
+
+### D-009 · 2026-11-11 · P1 · The probe is dry-run by default and ceiling-gated
+**Decision.** `scripts/probe.py` sends nothing without both `--go` and
+`--max-tokens-total N`; the ceiling uses reserve-before-send so a request that turns out
+to cost more than estimated cannot overshoot it. No retries. Authorization is never
+logged and the key value is scrubbed from every artefact as a second defence. Spend is
+appended to `docs/TOKEN_LEDGER.md` only on `--go`. `rpd` is excluded from `--mode all`.
+**Why.** The probe is the first code that spends real money, and the failure mode of a
+probe is a silent overspend on day 1. Reserve-before-send is the only ordering that
+cannot overshoot, because it does not depend on knowing the cost in advance.
+**Rules out.** A probe that retries (a failure is data), and a probe that infers the
+key is absent rather than refusing.
+**Re-open if.** The measured daily cap makes a 60K day plan obviously wrong.
+
+### D-010 · 2026-11-11 · P1 · `bigctx` must not run inside the default plan
+**Decision.** `bigctx` is measured with its own token reservation, not as part of `--mode all`.
+**Why.** The dry run's own arithmetic: a 400-repeat filler prompt is ~240K tokens at the
+deliberate over-estimate (÷3 chars), four times the whole 60K day plan. The over-estimate
+is *correct* behaviour — it refused before spending — but the mode as specified would
+have needed a second day.
+**Rules out.** A single `--go` invocation covering `bigctx` plus everything else.
+**Re-open when.** `usage.prompt_tokens` for a known prompt is measured; the divisor moves
+from 3 to the observed chars-per-token and bigctx shrinks accordingly.
+
+### D-011 · 2026-11-11 · P0/P1 · `backend` is DECLARED, never computed (supersedes D-008)
+**Decision.** `EventLog(backend=...)` is a declaration, one of `groq`/`standin`/`mixed`,
+validated at construction. Per-attempt values go in `attempt_backend`. The observed
+breakdown is emitted once in `run.end` as `attempt_backend_counts`. Checker I7 compares
+each `attempt_backend` against the *declaration*; I8 checks the counts sum to the number
+of attempts.
+**Why.** A label computed from the attempts it describes cannot contradict them — so a
+run launched at the stand-in URL but tagged `groq` was undetectable, and I7's
+"mixed" escape hatch was itself derived from the data. Supervisor review; D-008's
+majority-with-tie-break is withdrawn.
+**What this fixed.** `RequestScope` no longer holds backend state; `run.start` and
+`run.end` carry the same declaration by construction. `close()` deliberately does not
+emit `run.end`, so a crashed run is distinguishable from a clean one.
+**Re-open if.** Runs become single-backend by construction and `mixed` is dead.
+
+### D-012 · 2026-11-11 · P1 · `bigctx` is sized in tokens, not repeat counts
+**Decision.** `--bigctx-tokens` defaults to `1.25 x models.small.tpm`. `--bigctx-repeat`
+is removed and rejects loudly rather than silently doing the wrong thing.
+**Why.** A repeat count made the prompt depend on a chars/token guess: 400 repeats
+estimated at 240K, four times the day plan, and it answered a question (context window)
+nobody asked. Sizing by TPM answers the actual question — what happens when ONE request
+exceeds the per-minute token limit — and lets bigctx share a day with the other modes.
+**Re-open when.** `usage.prompt_tokens` is measured for a known prompt; the estimate
+divisor moves from 3 and 1.25x may be tightened.
+
+### D-013 · 2026-11-11 · P2 · Chunks keep contaminated text; they are flagged, not filtered
+**Decision.** Table/figure caption chunks stay in the corpus with a `caption` flag.
+Longest-wins and dedup are not applied. Chunk size/overlap stay `null` in config until P10.
+**Why.** The retrieval section needs real examples of broken numeric rows. Filtering them
+would make the retriever look better than it is and delete the evidence. Choosing
+900/150 now would be choosing a number P10 exists to measure.
+**Re-open at P10.** If a filter improves recall@k, it becomes a *measured* setting with
+the untouched corpus as its control.
