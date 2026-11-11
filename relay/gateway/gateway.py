@@ -251,6 +251,17 @@ class Gateway:
                 if managed:
                     self.breaker.record(False, attempt.t_end)
                 raise DeadlineExceeded("attempt timed out") from None
+            except asyncio.CancelledError:
+                # H4: the caller abandoned this request. Cancelling the await above
+                # cancels the HTTP request itself, so the provider stops generating
+                # and the tokens stop. We do NOT retry, do NOT touch the retry
+                # credit, and re-raise so the cancellation keeps propagating: a
+                # swallowed CancelledError would leave a task running for a user
+                # who has already gone.
+                attempt.outcome = Outcome.CANCELLED
+                attempt.t_end = self.clock.now()
+                scope.attempt_end(attempt)
+                raise
 
             attempt.t_first_byte = self.clock.now()
             attempt.t_end = self.clock.now()

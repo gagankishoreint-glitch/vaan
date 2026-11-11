@@ -150,10 +150,31 @@ def check(events: Iterable[dict], latency_tol_s: float = 0.05) -> Report:
                     "I2_no_attempt_after_terminal", req_id,
                     f"{len(late)} attempt event(s) after terminal"))
 
-        # I5 reply type
+        # I5 reply type.
+        #
+        # `reply_type` is the CLASS of reply that was sent, and it is null exactly
+        # when nothing was sent -- which is the only correct outcome for an
+        # abandoned request (H4: the user has gone, so there is nobody to send to).
+        # A null reply_type on any other terminal is a bug: it means a request
+        # ended without a reply and without an abandonment to explain it.
+        #
+        # This used to fall back to the terminal name when reply_type was absent.
+        # That fallback conflated the two axes (how it ended vs what was sent) and
+        # turned every abandonment into a false H1 violation.
         for t in terminals:
-            kind = t.get("reply_type") or t.get("terminal")
-            if kind is not None and kind not in PERMITTED_REPLIES:
+            kind = t.get("reply_type")
+            # `reply_type` absent entirely = older log; fall back so old logs still
+            # check. An explicit null is different from absent and is validated.
+            if "reply_type" not in t:
+                kind = t.get("terminal")
+            if kind is None:
+                if t.get("terminal") != "abandoned":
+                    rep.violations.append(Violation(
+                        "I5_permitted_reply_only", req_id,
+                        f"terminal={t.get('terminal')!r} sent nothing but was not "
+                        f"abandoned; every other terminal must carry a reply"))
+                continue
+            if kind not in PERMITTED_REPLIES:
                 rep.violations.append(Violation(
                     "I5_permitted_reply_only", req_id,
                     f"terminal reply_type={kind!r} is not one of {sorted(PERMITTED_REPLIES)}"))

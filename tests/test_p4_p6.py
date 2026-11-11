@@ -359,3 +359,72 @@ def test_analyze_does_not_report_a_fabricated_ttft(tmp_path, capsys):
     main([str(tmp_path)])
     out = capsys.readouterr().out
     assert "TTFT is not measured" in out
+
+
+# ---------------------------------------------------------------- H4 abandonment
+
+def test_abandonment_cancels_in_flight_and_returns_no_reply():
+    """H4. A user who leaves must cancel the in-flight model call, not merely stop
+    looking at it, and must be sent nothing."""
+    import asyncio
+    import httpx
+    from relay.clock import RealClock
+    from relay.config import load_config
+    from relay.gateway.gateway import Gateway
+    from relay.pipeline.pipeline import Pipeline
+    from relay.retrieval.bm25 import Retriever
+
+    cfg = load_config()
+    cancelled = {"n": 0}
+
+    async def handler(request):
+        # never completes: the only way out is cancellation
+        await asyncio.sleep(30)
+        return httpx.Response(200, json={"choices": []})
+
+    async def go():
+        r = Retriever.from_jsonl("data/chunks/exp900/chunks.jsonl")
+        class Scope:
+            req_id = "A"
+            def emit(self, *a, **k): pass
+            def abandon(self, reason="user"): pass
+            def attempt_start(self, a): pass
+            def attempt_end(self, a):
+                if getattr(a, "outcome", None) == "cancelled" or str(
+                        getattr(a, "outcome", "")).endswith("cancelled"):
+                    cancelled["n"] += 1
+        transport = httpx.MockTransport(handler)
+        async with httpx.AsyncClient(transport=transport,
+                                     base_url="http://x/openai/v1") as c:
+            gw = Gateway.from_config(cfg, RealClock(), None,
+                                     base_url="http://x/openai/v1",
+                                     api_key="k", client=c)
+            p = Pipeline(cfg, r, gw, Scope(), patience_s=0.05)
+            out = await p.answer("How many attention heads in the base model?")
+        return out
+
+    out = asyncio.run(go())
+    assert out.terminal == "abandoned", out.terminal
+    assert out.reply is None, "an abandoned request must carry no reply"
+
+
+def test_send_reply_refuses_a_payload_on_an_abandoned_request():
+    from relay.pipeline.pipeline import send_reply
+    from relay.contracts import NoEvidence
+    assert send_reply(None, abandoned=True) is None
+    with pytest.raises(TypeError, match="must send nothing"):
+        send_reply(NoEvidence("x"), abandoned=True)
+
+
+def test_checker_accepts_a_null_reply_type_only_for_abandoned():
+    from scripts.check_events import check
+    base = lambda **kw: {"type": "request.start", "run_id": "r", "backend": "standin",
+                         "req_id": "A", "t_mono": 1.0, "t_wall": 1.0, **kw}
+    good = [base(), base(type="request.end", total_elapsed_s=0.0, waiting_s=0.0,
+                         working_s=0.0, retrying_s=0.0),
+            base(type="terminal", terminal="abandoned", reply_type=None)]
+    assert check(good).violations == []
+    bad = [base(), base(type="request.end", total_elapsed_s=0.0, waiting_s=0.0,
+                        working_s=0.0, retrying_s=0.0),
+           base(type="terminal", terminal="answered", reply_type=None)]
+    assert any("sent nothing" in v.detail for v in check(bad).violations)

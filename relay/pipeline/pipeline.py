@@ -5,6 +5,7 @@ three permitted reply types.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass
@@ -53,8 +54,20 @@ def gate(hits: list[Hit], threshold: float) -> bool:
     return bool(hits) and hits[0].score >= threshold
 
 
-def send_reply(reply: Reply) -> Reply:
-    """The single exit. H1 enforced here and nowhere else."""
+def send_reply(reply: Optional[Reply], *, abandoned: bool = False) -> Optional[Reply]:
+    """The single exit. H1 enforced here and nowhere else.
+
+    `abandoned=True` is the one case where the correct reply is NO reply: the user
+    has left, so there is nobody to send to. That satisfies H1 trivially (nothing
+    unverified is transmitted) and it is checked rather than assumed -- an
+    abandonment that still carries a payload is a bug, not a courtesy.
+    """
+    if abandoned:
+        if reply is not None:
+            raise TypeError(
+                "abandoned request must send nothing, "
+                f"got {type(reply).__name__}")
+        return None
     if not is_reply(reply):
         raise TypeError(f"H1 violation: refusing to send {type(reply).__name__}")
     return reply
@@ -62,7 +75,8 @@ def send_reply(reply: Reply) -> Reply:
 
 class Pipeline:
     def __init__(self, cfg: Config, retriever: Retriever, gateway: Gateway,
-                 scope, embed_quote_from: Optional[callable] = None):
+                 scope, embed_quote_from: Optional[callable] = None,
+                 patience_s: Optional[float] = None):
         self.cfg = cfg
         self.r = retriever
         self.gw = gateway
@@ -71,6 +85,20 @@ class Pipeline:
         self.threshold = cfg.get("retrieval.gate_threshold", 15.0)
         self.deadline = (cfg.get("gateway.request_deadline_s")
                          or cfg.get("gateway.request_deadline_standin_s", 30.0))
+        # H4: how long a user waits before leaving. PASSED IN, never guessed --
+        # expiry here cancels the in-flight call and stops token spend.
+        self.patience_s = patience_s if patience_s is not None else cfg.get(
+            "user.patience_s")
+
+    async def _draft(self, hits, question: str):
+        return await self.gw.call(
+            scope=self.scope, step="draft",
+            model=self.cfg.get("models.small.id"),
+            messages=[{"role": "user", "content": DRAFT_PROMPT.format(
+                passages=format_passages(hits), question=question)}],
+            max_tokens=self.cfg.get("pipeline.max_tokens.draft", 400),
+            deadline_s=self.deadline,
+            reasoning_effort=self.cfg.get("models.reasoning_effort"))
 
     async def answer(self, question: str) -> Outcome_:
         hits = self.r.search(question, k=self.k)
@@ -84,14 +112,19 @@ class Pipeline:
                 "gate_low_score")
 
         try:
-            body = await self.gw.call(
-                scope=self.scope, step="draft",
-                model=self.cfg.get("models.small.id"),
-                messages=[{"role": "user", "content": DRAFT_PROMPT.format(
-                    passages=format_passages(hits), question=question)}],
-                max_tokens=self.cfg.get("pipeline.max_tokens.draft", 400),
-                deadline_s=self.deadline,
-                reasoning_effort=self.cfg.get("models.reasoning_effort"))
+            if self.patience_s:
+                # The wait_for is the abandonment mechanism: when it fires it
+                # CANCELS the draft, which cancels the HTTP request, which stops
+                # the provider generating. Tokens already generated are spent;
+                # nothing after this point is.
+                body = await asyncio.wait_for(self._draft(hits, question),
+                                              timeout=self.patience_s)
+            else:
+                body = await self._draft(hits, question)
+        except asyncio.TimeoutError:
+            self.scope.abandon("patience")
+            return Outcome_(send_reply(None, abandoned=True), "abandoned",
+                            f"patience_{self.patience_s}s")
         except (DeadlineExceeded, BreakerOpen) as e:
             return Outcome_(send_reply(PassagesOnly(
                 "The model is busy; here are the passages that would answer this.",

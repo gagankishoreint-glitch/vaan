@@ -55,7 +55,7 @@ async def main_async(a) -> int:
             scope = log.request(q["qid"])
             t0 = clock.now()
             scope.emit("request.start", question=q["question"][:200])
-            pipe = Pipeline(cfg, r, gw, scope)
+            pipe = Pipeline(cfg, r, gw, scope, patience_s=a.patience)
             try:
                 out = await pipe.answer(q["question"])
             except (httpx.HTTPError, OSError) as e:
@@ -71,9 +71,14 @@ async def main_async(a) -> int:
             total = clock.now() - t0
             reply = out.reply
             n_cites = len(reply.citations) if isinstance(reply, VerifiedAnswer) else 0
-            scope.finish(out.terminal, reply_type=reply_type_of(reply),
-                         total_elapsed_s=round(total, 4), waiting_s=0.0,
-                         working_s=round(total, 4), retrying_s=0.0)
+            if reply is None:      # abandoned: nothing is sent, at all (H4)
+                scope.finish(out.terminal, reply_type=None,
+                             total_elapsed_s=round(total, 4), waiting_s=0.0,
+                             working_s=round(total, 4), retrying_s=0.0)
+            else:
+                scope.finish(out.terminal, reply_type=reply_type_of(reply),
+                             total_elapsed_s=round(total, 4), waiting_s=0.0,
+                             working_s=round(total, 4), retrying_s=0.0)
             gold = set(q["gold"])
             cited = {c.chunk_id for c in reply.citations} if isinstance(
                 reply, VerifiedAnswer) else set()
@@ -102,6 +107,10 @@ def main(argv=None) -> int:
     ap.add_argument("--chunks", default="data/chunks/exp900/chunks.jsonl")
     ap.add_argument("--questions", default="data/eval/questions.jsonl")
     ap.add_argument("--limit", type=int, default=8)
+    ap.add_argument("--patience", type=float, default=None,
+                    help="seconds before the user abandons; expiry cancels the "
+                         "draft and stops token spend (H4). Default from "
+                         "user.patience_s, which is null until measured.")
     return asyncio.run(main_async(ap.parse_args(argv)))
 
 

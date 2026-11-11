@@ -1,0 +1,12 @@
+{
+  "complete_run": {
+    "completed": 10,
+    "admitted": 10,
+    "day_tokens": 2000
+  },
+  "cancelled_run": {
+    "completed": 0,
+    "admitted": 10,
+    "day_tokens": 2000
+  }
+}

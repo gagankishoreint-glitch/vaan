@@ -288,3 +288,14 @@ resolves against the index.
 **Lesson.** The same class of error as BUG-003, caught by the same class of check.
 A metric that cannot distinguish "no gold" from "gold not found yet" will silently
 report a number.
+
+## BUG-016 · L6 checker · `reply_type` fell back to the terminal name
+**Cause.** `kind = t.get("reply_type") or t.get("terminal")`. With abandonment
+introduced, an abandoned request legitimately has `reply_type: null` — and the
+fallback turned that null into `"abandoned"`, which is not a permitted reply. Five
+of eight requests were reported as H1 violations when nothing was sent at all.
+**Fix.** An explicit `reply_type: null` is now a distinct case: legal when the
+terminal is `abandoned`, and a violation otherwise ("sent nothing but was not
+abandoned"). A *missing* key still falls back, so older logs keep checking.
+**Lesson.** `or` is the same hazard as BUG-003/015: it silently treats "absent" as
+a value. An explicit null and an absent key must not be conflated.
