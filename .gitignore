@@ -1,0 +1,25 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+__pycache__/
+
+# Raw run output stays out of git WHILE DEVELOPING.
+# IT MUST BE PRESENT IN THE SUBMISSION -- see docs/DECISIONS.md D-004.
+runs/*/
+!runs/.gitkeep
+
+# Chunk caches are reproducible from the PDFs; do not commit them.
+data/chunks/*.json
+data/chunks/*.jsonl
+!data/chunks/.gitkeep
+
+# Paper PDFs are large binaries delivered with the submission, not committed
+# during development. Hashes are recorded in data/papers/SHA256SUMS.
+data/papers/*.pdf
+
+# Scratch
+.DS_Store
+*.log
+dist/
