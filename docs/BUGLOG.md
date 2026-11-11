@@ -408,6 +408,35 @@ host while still permitting `127.0.0.1:8009`.
 **Lesson.** Tests that run production entry points need the network denied, not just
 credentials withheld.
 
+### The (n) proof, as run
+
+How the real `.env` was **simulated**: a single line, in the repository root, containing
+an obviously fake key —
+
+    printf 'GROQ_API_KEY=gsk_SIMULATEDnotarealkey0000000000\n' > .env
+
+That is the whole simulation. It reproduces the condition that caused the bug (a `.env`
+on disk holding a key-shaped value that the loader will find) without ever possessing a
+real credential, so nothing in the run could have spent money even if the guard had
+failed. `.env` is git-ignored (`.gitignore:1`), so it never enters a commit.
+
+| Where | Condition | Result |
+|---|---|---|
+| `/home/user/vaan` | `.env` present | `280 passed` — run 1 |
+| `/home/user/vaan` | `.env` present | `280 passed` — run 2 |
+| fresh clone of `06a1a11` | `.env` present, 3 PDFs | `280 passed` |
+| fresh clone, second run | `.env` present | `280 passed`, `runs/` identical (same 4 files, same mtimes) |
+
+`sha256(docs/TOKEN_LEDGER.md)` was `56addc254168c35f…` before both runs and after them,
+in both the working copy and the clone. A file-by-file `mtime` listing of `runs/` before
+and after one run `diff`ed clean.
+
+The guard was proved to *fire*, not merely to be installed: a throwaway test that opened
+`socket.connect(("api.groq.com", 443))` failed with `RuntimeError: test attempted a live
+network connection to 'api.groq.com'`, and an `httpx.get` to the same host failed the
+same way, while a `connect(("127.0.0.1", 8009))` was still permitted so the stand-in
+suite keeps working.
+
 ## BUG-025 · gateway · the busiest code path ignored rate-limit headers
 **Cause.** `consume()` parsed SSE frames and threw away the HTTP response headers, so
 `_streamed_call` never called `learn_limits`/`reconcile`. Every pipeline answer is

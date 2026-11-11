@@ -1,4 +1,9 @@
-"""One failure-path test per new mechanism. No more than that (compressed mode)."""
+"""One failure-path test per new mechanism. No more than that (compressed mode).
+
+Run:
+    python -m pytest -q tests/test_p4_p6.py           -> 48 passed
+    python -m pytest -q tests/test_p4_p6.py -k "reconcile or ratchet"  -> 4 passed
+"""
 from __future__ import annotations
 
 import os

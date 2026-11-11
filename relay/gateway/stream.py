@@ -15,6 +15,9 @@ makes "TTFT" numbers in reports incomparable with each other:
 They are ordered first_delta <= model_ttft <= user_ttft, and the gap between the
 last two is the cost of verification: the user waits for the model AND for us.
 Reporting only one number hides which part is slow.
+
+Run:
+    python -m pytest -q tests/test_clock.py tests/test_p4_p6.py   -> all pass
 """
 from __future__ import annotations
 

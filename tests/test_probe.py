@@ -1,4 +1,8 @@
-"""Probe tests. No network: every test either dry-runs or uses httpx.MockTransport."""
+"""Probe tests. No network: every test either dry-runs or uses httpx.MockTransport.
+
+Run:
+    python -m pytest -q tests/test_probe.py           -> 52 passed
+"""
 from __future__ import annotations
 
 import json

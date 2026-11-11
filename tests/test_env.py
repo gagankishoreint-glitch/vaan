@@ -2,6 +2,9 @@
 
 The bug being pinned: the probe told the user to create .env and then never read it.
 A tool that instructs a setup step must perform it.
+
+Run:
+    python -m pytest -q tests/test_env.py             -> 7 passed
 """
 from __future__ import annotations
 

@@ -6,6 +6,9 @@ refilled between the two header reads and no consumption was measured at all. It
 also compared against a `len/3` estimate that was 88 tokens against 117 actual.
 
 These tests pin the three conditions and the refusal.
+
+Run:
+    python -m pytest -q tests/test_probe_q06.py       -> 8 passed
 """
 from __future__ import annotations
 

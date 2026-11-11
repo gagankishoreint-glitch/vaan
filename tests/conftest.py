@@ -1,10 +1,15 @@
 """Shared test safety net and fixtures.
 
-Three autouse guards live here, both of them consequences of real failures:
+Three autouse guards live here, all of them consequences of real failures:
 
   * `_no_real_ledger`   -- a test wrote 234 fictional tokens to the real budget.
   * `_no_live_network`  -- a test spent 117 real Groq tokens through a .env file.
   * `_no_dotenv`        -- the suite must not read a developer's .env at all.
+
+The three guards are the whole point of this file:
+
+    python -m pytest -q                              -> 280 passed, zero skips
+    cat .env   # a real key, then rerun the line above -> still 280 passed
 """
 from __future__ import annotations
 
