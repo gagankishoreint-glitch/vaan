@@ -16,6 +16,10 @@ meta:
 models:
   small:  {id: "openai/gpt-oss-20b",  rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
   large:  {id: "openai/gpt-oss-120b", rpm: 30, rpd: 1000, tpm: 8000, tpd: 200000}
+  # Sent ONLY to gpt-oss models, and never "none". "low" is the cheapest setting
+  # that stays inside the reasoning family; the probe records the verbatim 400 if
+  # the service rejects the parameter, so this is the fallback until then.
+  reasoning_effort: "low"
   buckets_separate_per_model: null    # set by P1 probe: exhaust one model, watch the other's headers
 
 user:
@@ -28,6 +32,10 @@ slo:
 
 pipeline:
   max_loops: 1
+  # Stream the draft so model_ttft (first CONTENT delta) is observable. The
+  # pipeline still buffers and verifies before sending, so this does not reduce
+  # user-visible latency yet -- it makes the timing measurable.
+  stream: false
   max_redrafts: 1
   top_k: 4
   max_tokens: {rewrite: 80, draft: 400, verify: 120}
@@ -39,6 +47,16 @@ pipeline:
 gateway:
   retry_policy: managed               # managed | naive (naive exists only to show harm on the stand-in)
   retry_budget_ratio: 0.1             # fraction of traffic allowed to retry at all
+  # Hard cap on HTTP attempts per logical call. Distinct from the ratio: the ratio
+  # is "how much of traffic may retry at all", this is "how far one call may go".
+  max_attempts: 3
+  # Naive policy only (stand-in only, exists to demonstrate harm). Bounded so it
+  # cannot recurse; fixed backoff because the point is that it ignores retry-after.
+  naive_max_attempts: 5
+  naive_backoff_s: 0.2
+  # Credit granted at start-up so a cold gateway can retry its first failures.
+  # 1.0 = allow one retry before any traffic has accrued.
+  retry_credit_floor: 1.0
   attempt_timeout_s: null             # set by P1 probe: p99 of stand-in fast path, plus margin
   queue_max: null                     # set by P1: depth at which admission starts queueing/shedding
   breaker: {fail_threshold: 5, open_s: 10}
@@ -48,6 +66,8 @@ gateway:
   # records why. Set only once the real day-limit retry-after is observed (Q-09).
   day_429_min_retry_after_s: null     # set by P1 Q-09: observed day-limit retry-after
   request_deadline_s: null            # set by L5: user patience minus reply-render margin
+  # Provisional during P6 (stand-in only); replaced by the L5 patience measurement.
+  request_deadline_standin_s: 30.0
 
 ladder:
   # PRD s6. L0 and L3 are structural; L1 and L2 need measured thresholds.
@@ -61,6 +81,10 @@ retrieval:
   chunk_overlap: null                 # set by P2: chosen against measured retrieval recall
   bm25_k1: 1.5                        # library default; re-tuned only if P10 shows it matters
   bm25_b: 0.75
+  # Evidence gate: top-1 BM25 score at or above this means "strong evidence".
+  # MEASURED in P3 at chunk_size 900 via scripts/retrieval_eval.py (25th pct of
+  # answerable top-1 scores). Re-measure if the corpus changes.
+  gate_threshold: 15.86
 
 standin:
   seed: 7

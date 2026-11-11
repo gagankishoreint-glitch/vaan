@@ -140,3 +140,71 @@ would make the retriever look better than it is and delete the evidence. Choosin
 900/150 now would be choosing a number P10 exists to measure.
 **Re-open at P10.** If a filter improves recall@k, it becomes a *measured* setting with
 the untouched corpus as its control.
+
+### D-014 · 2026-11-11 · P4 · the stand-in may use raw time; nothing else may
+**Decision.** `tests/test_lint_rules.py` allows `time.monotonic()` and
+`asyncio.sleep()` in `relay/standin/server.py` only.
+**Why.** Rule 7 exists so our own duration measurements are injectable and testable.
+The stand-in's entire job is to *fabricate* latency; forcing it through our Clock
+would make it measure itself. The allowlist entry carries this justification inline.
+**Re-open if.** Any other module is added to the allowlist — at that point the rule
+has stopped meaning anything.
+
+### D-015 · 2026-11-11 · P6 · the evidence gate is permissive on purpose
+**Decision.** `retrieval.gate_threshold: 15.86` is committed and the gate admits
+when top-1 >= it. It is deliberately not tuned to minimise false-answers.
+**Why.** The P3 threshold sweep evaluates every achievable operating point across
+20 answerable and 7 unanswerable questions, and finds **no threshold with both
+errors at zero**; the best point (14.82) still misclassifies 3 of 27. A strict gate
+would refuse real questions at a measured rate. The gate can therefore only be a
+cost control, never a correctness mechanism: H1 is guaranteed by `verify.py`
+afterwards. Verification is the guarantee; the gate decides how often it is needed.
+**Not tuned to 14.82.** Three questions separate it from 15.86 at n=27. Picking the
+argmin of a sweep over 27 questions is fitting to noise; the fix is a larger eval
+set, not a better threshold.
+**Rules out.** Treating the BM25 score as the safety mechanism.
+**Re-open at P10.** If a reranker improves separation, the gate can tighten.
+
+### D-016 · 2026-11-11 · P5 · The local bucket mirrors the header in both directions
+**Decision.** `Budget` reserves `max_tokens` at admission and then, when any response
+arrives, hands the reservation back (`settle`) and adopts the provider's own view of
+the window from `x-ratelimit-remaining-tokens` (`reconcile`) — upward as well as
+downward.
+
+**What the gateway did before this, stated plainly, because the question deserved a
+precise answer.** It reserved prompt+cap at admission and never refunded locally. The
+only correction was `reconcile`, which moved the bucket **downward only**
+(`max(tpm_used, provider_used)`). Two consequences followed:
+
+1. A short answer left the difference between its reservation and its real cost in the
+   local bucket until the window rolled over. Twenty-five answers reserving 350
+   against a 20-token actual cost closed an 8000-token window while the provider still
+   reported the window empty. The gateway would throttle itself against a limit nobody
+   was hitting. The test that now catches this fails with
+   `local TPM budget exhausted: 7700+350 > 8000` after the provider has repeatedly said
+   the bucket is full.
+2. The streamed path — which is **every answer the pipeline sends** — never reconciled
+   at all. `consume()` discarded the response headers, so the bucket was learned and
+   corrected only on the probe's non-streamed calls. The rate-limit behaviour therefore
+   depended on which code path happened to be used.
+
+**Why upward is safe now.** `tpm_used_floor` holds the tokens taken in the current
+window that no response has yet accounted for; `reconcile` cannot move the bucket below
+it, so a header read can never forget an in-flight reservation. `settle` drops the
+floor by exactly what the arriving response reserved. The floor is clamped at zero so
+out-of-order settlement is harmless: too low only lets the header speak.
+
+**What this does NOT decide.** Whether Groq refunds the unused part of the cap is still
+unproven (n=2, and the two models fit equally well — see Q-06b and the pending A/B).
+This design does not need that answer: it copies the header instead of predicting it,
+and it adds no refund of its own on top. If Groq does not refund, the header will not
+move and the local bucket will not move either. If it does, both move together.
+
+**Rules out.** Reconstructing usage from `remaining` against *our* limit (BUG-010,
+units mismatch); moving only downward; trusting the header across a window rollover;
+and any second, independent refund calculation layered on top of the header.
+
+**Re-open if.** The A/B shows the header is not refreshed per response — then
+reconciliation must be rate-limited to the reset interval rather than per call.
+**Run it.** `python -m pytest -q tests/test_p4_p6.py -k "reconcile or ratchet"` →
+`2 passed`.

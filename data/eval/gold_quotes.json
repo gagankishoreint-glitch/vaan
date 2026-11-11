@@ -1,0 +1,317 @@
+{
+  "A1": {
+    "qid": "A1",
+    "type": "single",
+    "answer": "8",
+    "quotes": [
+      {
+        "chunk_id": "attn-v7:s3.2.2:c0001",
+        "quote": "Rdmodel\u00d7dk, W V\n\u2208Rdmodel\u00d7dv\nand W O \u2208Rhdv\u00d7dmodel.\nIn this work we employ h = 8 parallel attention layers, or heads. For each of these we use\ndk = dv = dmodel/h = 64. Due to the reduced dimension of each head, the total computational",
+        "chars": 232,
+        "verified": true,
+        "contains_answer": true
+      }
+    ]
+  },
+  "A2": {
+    "qid": "A2",
+    "type": "single",
+    "answer": "about 37000 tokens",
+    "quotes": [
+      {
+        "chunk_id": "attn-v7:s5.1:c0000",
+        "quote": "byte-pair encoding [3], which has a shared source-\ntarget vocabulary of about 37000 tokens. For English-French, we used the significantly larger WMT\n2014 English-French dataset consisting of 36M sentences and split tokens",
+        "chars": 221,
+        "verified": true,
+        "contains_answer": true
+      }
+    ]
+  },
+  "A3": {
+    "qid": "A3",
+    "type": "single",
+    "answer": "0.1",
+    "quotes": [
+      {
+        "chunk_id": "attn-v7:s5.4:c0001",
+        "quote": "encoder and decoder stacks. For the base model, we use a rate of\nPdrop = 0.1.\nLabel Smoothing\nDuring training, we employed label smoothing of value \u03f5ls = 0.1 [36]. This\nhurts perplexity, as the model learns to be more unsure",
+        "chars": 224,
+        "verified": true,
+        "contains_answer": true
+      }
+    ]
+  },
+  "A4": {
+    "qid": "A4",
+    "type": "single",
+    "answer": "epsilon_ls = 0.1",
+    "quotes": [
+      {
+        "chunk_id": "attn-v7:s5.4:c0001",
+        "quote": "For the base model, we use a rate of\nPdrop = 0.1.",
+        "chars": 49,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "A5": {
+    "qid": "A5",
+    "type": "single",
+    "answer": "it lets the model attend to information from different representation subspaces at different positions; averaging with a single head inhibits this",
+    "quotes": [
+      {
+        "chunk_id": "attn-v7:s3.2.2:c0001",
+        "quote": "Multi-head attention allows the model to jointly attend to information from different representation\nsubspaces at different positions.",
+        "chars": 134,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "A6": {
+    "qid": "A6",
+    "type": "single",
+    "answer": "28.4",
+    "quotes": [
+      {
+        "chunk_id": "attn-v7:s6.1:c0000",
+        "quote": "more than 2.0\nBLEU, establishing a new state-of-the-art BLEU score of 28.4. The configuration of this model is\nlisted in the bottom line of Table 3. Training took 3.5 days on 8 P100 GPUs. Even our base model\nsurpasses all",
+        "chars": 221,
+        "verified": true,
+        "contains_answer": true
+      }
+    ]
+  },
+  "A7": {
+    "qid": "A7",
+    "type": "single",
+    "answer": "warmup then inverse square root decay",
+    "quotes": [
+      {
+        "chunk_id": "attn-v7:s5.3:c0000",
+        "quote": "We used the Adam optimizer [20] with \u03b21 = 0.9, \u03b22 = 0.98 and \u03f5 = 10\u22129.",
+        "chars": 70,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "A8": {
+    "qid": "A8",
+    "type": "single",
+    "answer": "a hierarchical U-Net-like network with learned dynamic subsampling",
+    "quotes": [
+      {
+        "chunk_id": "hnet-v2:s2:c0000",
+        "quote": "H-Nets are defined as hierarchical U-Net-like networks, but with data-dependent dynamic subsampling that is learned\nend-to-end together with the rest of the model.",
+        "chars": 163,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "M1": {
+    "qid": "M1",
+    "type": "single",
+    "answer": "12.5 Hz",
+    "quotes": [
+      {
+        "chunk_id": "moshi-v1:s3.2.2:c0002",
+        "quote": "Output space\nText cardinality\n32000\n32000\nAudio cardinality\n2048\nFrame rate\n12.5 Hz\nCommon parameters\nBatch size (text)\n4.2M tok.\n1.2M tok.\n1.2M tok.\nBatch size (audio)\n16h\n40min\n2.7h\nTraining steps\n500k\n100k\n10k\n30k\nLR",
+        "chars": 219,
+        "verified": true,
+        "contains_answer": true
+      }
+    ]
+  },
+  "M2": {
+    "qid": "M2",
+    "type": "single",
+    "answer": "to provide time-aligned text tokens that improve linguistic quality of generated speech",
+    "quotes": [
+      {
+        "chunk_id": "moshi-v1:ss0:c0001",
+        "quote": "Not only this \u201cInner\nMonologue\u201d method significantly improves the linguistic quality of generated speech, but we\nalso illustrate how it can provide streaming speech recognition and text-to-speech.",
+        "chars": 196,
+        "verified": true,
+        "contains_answer": false
+      },
+      {
+        "chunk_id": "moshi-v1:s5.2:c0009",
+        "quote": "We vary the weight of the semantic token while keeping the weight\nof other tokens (including the text token when using Inner Monologue) to 1.",
+        "chars": 141,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "M3": {
+    "qid": "M3",
+    "type": "single",
+    "answer": "it models user and system speech simultaneously rather than alternating turns",
+    "quotes": [
+      {
+        "chunk_id": "moshi-v1:s1:c0002",
+        "quote": "In this work we introduce Moshi, a speech-text foundation model and real-time spoken\ndialogue system that aims at solving the aforementioned limitations: latency, textual infor-\nmation bottleneck and turn-based",
+        "chars": 210,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "H1": {
+    "qid": "H1",
+    "type": "single",
+    "answer": "boundaries are learned end-to-end with the rest of the model rather than fixed by tokenization",
+    "quotes": [
+      {
+        "chunk_id": "hnet-v2:s2:c0000",
+        "quote": "H-Nets are defined as hierarchical U-Net-like networks, but with data-dependent dynamic subsampling that is learned\nend-to-end together with the rest of the model.",
+        "chars": 163,
+        "verified": true,
+        "contains_answer": false
+      },
+      {
+        "chunk_id": "hnet-v2:s2.2:c0000",
+        "quote": "In natural data, meaningful boundaries tend to emerge at points of contextual or semantic shift.",
+        "chars": 96,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "X1": {
+    "qid": "X1",
+    "type": "cross",
+    "answer": "Transformer keeps BPE tokenization; H-Net learns chunk boundaries to remove tokenization",
+    "quotes": [
+      {
+        "chunk_id": "hnet-v2:s1:c0000",
+        "quote": "Tokenization comes with a host of well-documented drawbacks, from poor character-level\nunderstanding to lack of meaning and interpretability to degraded performance on complex languages and modalities (Petrov\net al.",
+        "chars": 215,
+        "verified": true,
+        "contains_answer": false
+      },
+      {
+        "chunk_id": "attn-v7:s5.1:c0000",
+        "quote": "Sentence pairs were batched together by approximate sequence length.",
+        "chars": 68,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "X2": {
+    "qid": "X2",
+    "type": "cross",
+    "answer": "H-Net is hierarchical U-Net-like; the Transformer is a flat stack of 6 identical layers",
+    "quotes": [
+      {
+        "chunk_id": "hnet-v2:s2.1:c0000",
+        "quote": "This recursive design allows H-Net to scale to arbitrary depths.",
+        "chars": 64,
+        "verified": true,
+        "contains_answer": false
+      },
+      {
+        "chunk_id": "attn-v7:s3.1:c0000",
+        "quote": "Encoder:\nThe encoder is composed of a stack of N = 6 identical layers.",
+        "chars": 70,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "X3": {
+    "qid": "X3",
+    "type": "cross",
+    "answer": "Moshi is built for real-time full-duplex streaming; the others are offline sequence models",
+    "quotes": [
+      {
+        "chunk_id": "moshi-v1:ss0:c0002",
+        "quote": "Our re-\nsulting model is the first real-time full-duplex spoken large language model, with a theoret-\nical latency of 160ms, 200ms in practice, and is available at github.com/kyutai-labs/moshi.",
+        "chars": 193,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "X4": {
+    "qid": "X4",
+    "type": "cross",
+    "answer": "37000 (Transformer BPE) and 32000 (Moshi text cardinality)",
+    "quotes": [
+      {
+        "chunk_id": "attn-v7:s5.1:c0000",
+        "quote": "Sentences were encoded using byte-pair encoding [3], which has a shared source-\ntarget vocabulary of about 37000 tokens.",
+        "chars": 120,
+        "verified": true,
+        "contains_answer": false
+      },
+      {
+        "chunk_id": "moshi-v1:s3.2.2:c0002",
+        "quote": "Because this format contains\nall the text of a page, it includes a lot of",
+        "chars": 73,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "N1": {
+    "qid": "N1",
+    "type": "numeric",
+    "answer": "N = 6",
+    "quotes": [
+      {
+        "chunk_id": "attn-v7:s3.1:c0000",
+        "quote": "Encoder:\nThe encoder is composed of a stack of N = 6 identical layers. Each layer has two\nsub-layers. The first is a multi-head self-attention mechanism, and the second is a simple, position-\nwise fully connected feed-forward",
+        "chars": 225,
+        "verified": true,
+        "contains_answer": true
+      }
+    ]
+  },
+  "N2": {
+    "qid": "N2",
+    "type": "numeric",
+    "answer": "8 P100 GPUs for 3.5 days",
+    "quotes": [
+      {
+        "chunk_id": "attn-v7:s6.1:c0000",
+        "quote": "For the base models, we used a single model",
+        "chars": 43,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  },
+  "N3": {
+    "qid": "N3",
+    "type": "numeric",
+    "answer": "512",
+    "quotes": [
+      {
+        "chunk_id": "attn-v7:s3.1:c0000",
+        "quote": "as well as the embedding\nlayers, produce outputs of dimension dmodel = 512.\nDecoder:\nThe decoder is also composed of a stack of N = 6 identical layers. In addition to the two\nsub-layers in each encoder layer, the decoder",
+        "chars": 220,
+        "verified": true,
+        "contains_answer": true
+      }
+    ]
+  },
+  "N4": {
+    "qid": "N4",
+    "type": "numeric",
+    "answer": "4096 and 11264",
+    "quotes": [
+      {
+        "chunk_id": "moshi-v1:s3.2.2:c0002",
+        "quote": "pre-training\npre-training\npost-training\nfisher\nfine\nTemporal Transformer\nModel dimension\n4096\nsame\nMLP dimension\n11264\nNumber of heads\nNumber of layers\nContext size\n4096\n3000 steps, e.g.",
+        "chars": 186,
+        "verified": true,
+        "contains_answer": false
+      }
+    ]
+  }
+}

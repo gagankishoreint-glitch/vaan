@@ -205,3 +205,259 @@ non-bold title; body-sized numbered lines are accepted via the monotonicity rule
 `test_body_sized_numbered_heading_accepted_by_sequence`,
 `test_split_heading_across_two_lines`, and the integration guard
 `test_real_pdfs_produce_sane_sections`.
+
+---
+
+# P4-P6 bugs (compressed mode)
+
+## BUG-009 · L3 gateway · retry budget computed per-call, so it was always zero
+**Cause.** `max(1, int(self._calls * ratio))` was evaluated inside each call, so
+with `ratio=0.1` the limit was `int(0.1)=0` on call 1 and `int(0.2)=0` on call 2 —
+a retry could never happen until the 10th call, and `max(1, ...)` then allowed
+exactly one for the rest of the run.
+**Fix.** An accruing credit that grows by `retry_budget_ratio` per call and is
+spent one unit per retry, plus `gateway.retry_credit_floor` so a cold gateway can
+retry its first failure.
+**Lesson.** A budget expressed as a *rate* must be integrated, not re-derived from
+a counter each time.
+
+## BUG-010 · L3 gateway · reconcile mixed two different limits
+**Cause.** `provider_used = self.tpm - remaining_tpm` reconstructed the provider's
+usage using *our* limit. When the two differed (a large local budget against the
+stand-in's 8000), `remaining=0` became `used=10**9` and every subsequent request
+was refused locally as "TPM exhausted" — a self-inflicted outage that looked like
+correct rate limiting.
+**Fix.** Learn the provider's advertised limit from `x-ratelimit-limit-*`, convert
+`remaining` to a *fraction*, and apply that fraction to our own limit. Reconciling
+without a learned limit is now a no-op.
+**Test.** `test_budget_reconcile_uses_provider_ratio_not_our_limit`,
+`test_budget_reconcile_without_learned_limits_is_a_noop`.
+
+## BUG-011 · L4 pipeline · terminal `reply_type` named the terminal state
+**Cause.** The terminal event carried `reply_type=Terminal.ANSWERED` (`"answered"`)
+while the checker's permitted set is `verified_answer | no_evidence |
+passages_only`. Four of eight requests were reported as H1 violations — the
+checker was right and the pipeline was wrong.
+**Fix.** `reply_type_of(reply)` names the reply *class*. `terminal` and
+`reply_type` are different axes: how the request ended vs what was sent.
+
+## BUG-012 · L4 pipeline · transport errors escaped without a terminal event
+**Cause.** An `httpx.ConnectError` propagated out of `run_queries`, so a request
+got `request.start` and `request.end` but no `terminal` — an I1 violation, and the
+request would vanish from every report.
+**Fix.** Transport failures are caught and converted into a `PassagesOnly` reply.
+The user still gets an honest answer, and the log still has exactly one terminal.
+**Test.** The checker on a run with the stand-in down reports `violations=0`.
+
+## BUG-013 · L3 gateway · naive retry was recursive and crashed the process
+**Cause.** `_maybe_retry` called `self.call(...)` on failure. Against a persistent
+429 that never yields a 200, retry-after was ignored and the deadline was never
+checked, so the call chain grew until Python's stack died: **489 HTTP requests
+then `RecursionError`**.
+**Fix.** `call()` is a single bounded `for attempt_no in range(1, max_attempts+1)`
+loop. Policy lives in `_next_delay()`, a pure function returning either `None`
+(stop) or `(seconds, why)`. Naive: `naive_max_attempts=5`, fixed 0.2 s backoff,
+no local budget, no breaker, ignores retry-after — all from config.
+**Why it matters.** The old code made the *demonstration of harm* its own harm:
+the naive policy took the whole process down, which would have been reported as a
+gateway bug rather than as a policy result.
+**Test.** `test_naive_is_bounded_and_never_recurses` asserts exactly
+`naive_max_attempts` HTTP calls and no RecursionError.
+
+## BUG-014 · L4 stand-in · stale process read `max_tokens` as zero
+**Cause.** The gateway moved to `max_completion_tokens` while the running
+stand-in still read `max_tokens`. It got `None`, charged **1 token** per call, and
+so its 8000 TPM bucket never emptied. Managed vs naive came out *identical*.
+**Fix.** Stand-in reads `max_completion_tokens` with `max_tokens` as fallback.
+**Lesson.** A green comparison against a stale binary is indistinguishable from a
+null result. Both policies reported the same numbers; that was the tell.
+
+## BUG-015 · L2 eval · M3 was answerable but had an empty gold
+**Cause.** M3 ("what problem does full-duplex dialogue modelling solve") was typed
+`single` and given `gold: []`. Its gold chunk exists and states the answer
+verbatim: `moshi-v1:s1:c0002`, "fundamentally turn-based, assuming that dialogue is
+a sequence of well-defined single-speaker segments".
+**Effect.** M3 counted as an unanswerable question, inflating the false-answer rate
+and deflating recall. Every retrieval number in P3 was wrong by one to three
+questions until it was fixed.
+**How it was found.** The new `scripts/check_questions.py` rejected `type=single`
+with empty gold. The fault was invisible to every other check.
+**Fix.** Gold set from a verbatim-verified quote; the checker now enforces that
+only `ambiguous` and `unanswerable` may have no gold, and that every gold id
+resolves against the index.
+**Lesson.** The same class of error as BUG-003, caught by the same class of check.
+A metric that cannot distinguish "no gold" from "gold not found yet" will silently
+report a number.
+
+## BUG-016 · L6 checker · `reply_type` fell back to the terminal name
+**Cause.** `kind = t.get("reply_type") or t.get("terminal")`. With abandonment
+introduced, an abandoned request legitimately has `reply_type: null` — and the
+fallback turned that null into `"abandoned"`, which is not a permitted reply. Five
+of eight requests were reported as H1 violations when nothing was sent at all.
+**Fix.** An explicit `reply_type: null` is now a distinct case: legal when the
+terminal is `abandoned`, and a violation otherwise ("sent nothing but was not
+abandoned"). A *missing* key still falls back, so older logs keep checking.
+**Lesson.** `or` is the same hazard as BUG-003/015: it silently treats "absent" as
+a value. An explicit null and an absent key must not be conflated.
+
+## BUG-017 · L3 gateway · stream timestamps stamped at replay, not arrival
+**Cause.** Frames were buffered until the first content frame arrived, then replayed
+through the consumer, which stamped `first_delta` and `model_ttft` as it read them.
+Both landed microseconds apart, destroying the distinction the two fields exist to
+make — and the role-only frame's true arrival time was lost entirely.
+**Fix.** `consume()` stamps each frame as it arrives. The role-only frame sets
+`first_delta`; the first non-empty content delta sets `model_ttft`.
+Observed separation after the fix: 184 ms vs 196 ms.
+**Test.** `test_stream_timestamps_are_stamped_at_arrival_not_at_replay`.
+
+## BUG-018 · L4 pipeline · quote verification bypassed normalisation, discarding correct answers
+**Cause.** The citation-building loop tested `sentence in chunk.text` on raw text.
+A streamed draft joins words with spaces where the PDF chunk has a newline (SSE
+deltas are word-shaped; the newline between two PDF lines belongs to no delta).
+The raw test failed, `citations` came out empty, and the reply became
+`passages_only / no citations` — **a correct answer discarded as unverifiable**.
+**Effect.** Streaming answered 1/12 where buffering answered 6/12 on identical
+questions. Reproducible, deterministic.
+**Fix.** Route the test through `contains_quote`, the same NFKC + de-hyphenation
+normalisation the verifier has used since BUG-006.
+**Why it hid for two phases.** A buffered draft happened to reproduce the source's
+newline exactly, so draft and chunk matched byte for byte. The stand-in was
+accidentally perfectly aligned. Any real model that wraps a line would have
+triggered it.
+**Test.** `test_verification_normalises_whitespace_between_draft_and_source`,
+`test_streamed_and_buffered_pipelines_agree`.
+
+## BUG-020 · L4 instrumentation · "verification cost" was actually generation time
+**Cause.** `user_ttft - model_ttft` was reported as verification cost. But H1 forbids
+showing anything unverified, so the pipeline cannot observe the user-facing answer
+until the draft is COMPLETE — the whole of the remaining generation sits inside that
+gap. Measured as "verification": 0.10–0.32 s.
+**Actual.** With `generation_end` stamped: generating 0.196–0.259 s, **verifying
+0.0003–0.0006 s**. The claim was wrong by ~300×.
+**Fix.** `Attempt.t_generation_end`, stamped when the stream closes, logged on
+`attempt.end` and split out in `reply.ready` as `generating_s` / `verifying_s`.
+**Why it matters beyond the number.** The wrong figure supported a wrong argument
+("verification is why we need a degradation ladder"). Verification is free; the
+ladder would have to act on generation, and it would have to act before the call.
+**Lesson.** A two-point measurement cannot attribute a gap that contains a third,
+unmeasured phase. Stamp the boundary.
+
+## BUG-021 · L2 retrieval · chunk size was compared with context size varying
+**Cause.** The three settings were compared at fixed `k=4` while mean chunk length
+grew 570 → 845 → 1110 characters, so 1200/200 retrieved 4260 chars against 2254 for
+600/100. The "best setting" was substantially a "biggest context" result.
+**Fix.** `--char-budget` (default 3600, the 900/150 fixed-k mean) truncates retrieved
+hits to an equal character count and reports mean chars per answer so the cap is
+auditable.
+**Result.** 1200/200 falls from 55% to 45% recall at equal characters, below
+900/150's 50%. The committed setting survives; the ORIGINAL JUSTIFICATION for it
+("1200 leads on both recall and MRR, but by noise") was wrong in both directions.
+**Lesson.** When comparing two configurations, list every quantity that differs
+between them, not just the one named in the experiment title.
+
+## BUG-022 · probe · Q-06 reported a verdict from a negative measurement
+**Cause.** The TPM-drop test compared `remaining_tokens` between two responses and
+picked whichever of two candidate costs was closer. It was seen producing a verdict
+from a drop of **-50** — the bucket refilled between reads, so no consumption was
+measured at all. Both candidate costs were also built on a `len/3` estimate that gave
+88 tokens against 117 actual.
+**Fix.** Three conditions before any verdict: reads under 1 s apart, positive drop,
+a measured prompt overhead. Otherwise `INCONCLUSIVE (refill confound)` with the
+failing condition named. The estimate is replaced by the first real
+`usage.prompt_tokens`.
+**Lesson.** "Which of these two numbers is closer" is not a test when both are
+unvalidated and the measurement may be zero.
+
+## BUG-023 · probe · an aborted run was charged and recorded nowhere
+**Cause.** `main()` did `except CeilingReached: return 1` above the block that writes
+`docs/TOKEN_LEDGER.md`. Every path that returned early — ceiling abort, exception —
+skipped the write, so tokens taken from a finite daily budget left no trace. The
+ceilings exist to protect a ~200K-token day; a ceiling that silently loses spend
+makes the budget unaccountable exactly when it matters most.
+**Fix.** The ledger write moved into a `finally`. The abort reason and exit code are
+computed before the return and stamped onto the row (`abort`, `label="aborted: …"`),
+so an aborted run is visible as aborted rather than looking like a short successful
+one. Regression test drives the abort through a fake transport and asserts the charge
+lands.
+**Second bug found by the fix.** `Ledger.__init__(self, path=LEDGER_PATH)` bound the
+path as a *default argument*, evaluated once at class definition. Patching the module
+constant in a test therefore did nothing and the test wrote **234 fictional tokens to
+the real ledger**. Default is now `None`, resolved at call time, and an autouse guard
+in `tests/conftest.py` redirects the path for every test.
+**Mutation check.** The regression test was verified to fail against the *original*
+control flow, not just to pass against the fix. Restoring `return 1` inside the
+`CeilingReached` handler and moving the ledger block back out of the `finally` makes it
+fail with `ABORTED RUN LOST ITS CHARGE -- the (o) bug is back`, the ledger still reading
+`# TOKEN LEDGER`. A first attempt at that check passed spuriously: the only thing
+reverted was the `finally` placement, but `main()` now computes `exit_code` instead of
+returning early, so the trailing block still ran. Position of the `finally` is not what
+fixes this — *not returning early* is. Both halves are load-bearing.
+**Lesson.** A budget ledger must be written in a `finally`, and a constant used as a
+default argument is not configurable.
+
+## BUG-024 · tests · a unit test spent real Groq tokens
+**Cause.** `test_go_without_key_exits_2` deleted `GROQ_API_KEY` and ran `main()`. The
+probe then called `load_env()`, which read the developer's real `.env` and put a real
+key straight back into `os.environ`. The "no key" test ran the probe for real: 117
+tokens were charged (`runs/probe_20261111T064821Z`). Absence of a credential was
+being treated as a safety mechanism, but the credential was only absent from the
+process environment — not from disk.
+**Fix.** Three layers, because one was clearly not enough. (1) `RELAY_NO_DOTENV=1`
+disarms the loader, set by an autouse fixture for the whole suite. (2) An autouse
+guard fails any test that opens a socket to a non-localhost host, so a future leak
+fails loudly instead of spending money. (3) The probe takes `--env K=V,…` and
+resolves its key and base URL against that mapping, making the "no key" path testable
+with no environment at all.
+**Proof.** With a real `.env` present in the repo, `pytest -q` twice: 278 passed both
+times, `sha256(docs/TOKEN_LEDGER.md)` identical before and after
+(`ec97edd0…33cc63`), zero files under `runs/` modified. The guard was verified to
+fail a direct `socket.connect(("api.groq.com", 443))` and an `httpx.get` to the same
+host while still permitting `127.0.0.1:8009`.
+**Lesson.** Tests that run production entry points need the network denied, not just
+credentials withheld.
+
+### The (n) proof, as run
+
+How the real `.env` was **simulated**: a single line, in the repository root, containing
+an obviously fake key —
+
+    printf 'GROQ_API_KEY=FAKE_key_for_the_test_suite_only\n' > .env
+
+That is the whole simulation. It reproduces the condition that caused the bug (a `.env`
+on disk holding a key-shaped value that the loader will find) without ever possessing a
+real credential, so nothing in the run could have spent money even if the guard had
+failed. `.env` is git-ignored (`.gitignore:1`), so it never enters a commit.
+
+| Where | Condition | Result |
+|---|---|---|
+| `/home/user/vaan` | `.env` present | `280 passed` — run 1 |
+| `/home/user/vaan` | `.env` present | `280 passed` — run 2 |
+| fresh clone of `06a1a11` | `.env` present, 3 PDFs | `280 passed` |
+| fresh clone, second run | `.env` present | `280 passed`, `runs/` identical (same 4 files, same mtimes) |
+
+`sha256(docs/TOKEN_LEDGER.md)` was `56addc254168c35f…` before both runs and after them,
+in both the working copy and the clone. A file-by-file `mtime` listing of `runs/` before
+and after one run `diff`ed clean.
+
+The guard was proved to *fire*, not merely to be installed: a throwaway test that opened
+`socket.connect(("api.groq.com", 443))` failed with `RuntimeError: test attempted a live
+network connection to 'api.groq.com'`, and an `httpx.get` to the same host failed the
+same way, while a `connect(("127.0.0.1", 8009))` was still permitted so the stand-in
+suite keeps working.
+
+## BUG-025 · gateway · the busiest code path ignored rate-limit headers
+**Cause.** `consume()` parsed SSE frames and threw away the HTTP response headers, so
+`_streamed_call` never called `learn_limits`/`reconcile`. Every pipeline answer is
+streamed, so the local bucket was reconciled only on the probe's non-streamed calls —
+the gateway's rate-limit behaviour depended on which function happened to be running.
+**Fix.** `consume()` takes the headers and returns them on `StreamTimings`; the
+streamed branch reconciles exactly as the buffered branch does. `Budget.reconcile` now
+moves in both directions (capped by `tpm_used_floor`) and `settle()` releases a
+reservation when its response arrives.
+**Proof the test catches it.** With the streamed reconciliation removed the (m) test
+fails as `relay.gateway.gateway.DeadlineExceeded: local TPM budget exhausted: 7700+350 > 8000`
+after 25 answers whose provider-reported window was still full. Restored: `4 passed`.
+**Side finding.** The two new tests passed alone and failed in the suite with
+`RuntimeError: There is no current event loop` — `asyncio.get_event_loop()` is
+deprecated and does not survive another test closing the loop. `asyncio.run` fixes it.
+**Lesson.** A test that only passes when run alone is not passing.

@@ -1,0 +1,18 @@
+[
+  {
+    "policy": "managed",
+    "deadline_s": 3.0,
+    "http": 1,
+    "429s": 1,
+    "outcome": "DeadlineExceeded",
+    "wall_s": 0.01
+  },
+  {
+    "policy": "naive",
+    "deadline_s": 3.0,
+    "http": 1,
+    "429s": 1,
+    "outcome": "DeadlineExceeded",
+    "wall_s": 0.01
+  }
+]
