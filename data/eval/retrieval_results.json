@@ -167,7 +167,9 @@
       {
         "qid": "M3",
         "type": "single",
-        "gold": [],
+        "gold": [
+          "moshi-v1:s1:c0002"
+        ],
         "top": [
           "moshi-v1:s2:c0018",
           "moshi-v1:s2:c0013",
@@ -425,12 +427,12 @@
         "gated_in": false
       }
     ],
-    "recall_at_k": 0.42105263157894735,
-    "mrr": 0.2807017543859649,
-    "false_abstain": 0.2631578947368421,
+    "recall_at_k": 0.4,
+    "mrr": 0.26666666666666666,
+    "false_abstain": 0.3,
     "false_answer": 0.0,
-    "n_answerable": 19,
-    "n_unanswerable": 8,
+    "n_answerable": 20,
+    "n_unanswerable": 7,
     "chunk_size": 600,
     "overlap": 100,
     "n_chunks": 744
@@ -603,7 +605,9 @@
       {
         "qid": "M3",
         "type": "single",
-        "gold": [],
+        "gold": [
+          "moshi-v1:s1:c0002"
+        ],
         "top": [
           "moshi-v1:s2:c0012",
           "moshi-v1:ss0:c0000",
@@ -861,12 +865,12 @@
         "gated_in": false
       }
     ],
-    "recall_at_k": 0.5263157894736842,
-    "mrr": 0.425438596491228,
-    "false_abstain": 0.2631578947368421,
-    "false_answer": 0.125,
-    "n_answerable": 19,
-    "n_unanswerable": 8,
+    "recall_at_k": 0.5,
+    "mrr": 0.4041666666666666,
+    "false_abstain": 0.3,
+    "false_answer": 0.14285714285714285,
+    "n_answerable": 20,
+    "n_unanswerable": 7,
     "chunk_size": 900,
     "overlap": 150,
     "n_chunks": 500
@@ -1039,7 +1043,9 @@
       {
         "qid": "M3",
         "type": "single",
-        "gold": [],
+        "gold": [
+          "moshi-v1:s1:c0002"
+        ],
         "top": [
           "moshi-v1:s2:c0009",
           "moshi-v1:s5.6:c0001",
@@ -1297,12 +1303,12 @@
         "gated_in": false
       }
     ],
-    "recall_at_k": 0.5263157894736842,
-    "mrr": 0.3508771929824561,
-    "false_abstain": 0.21052631578947367,
-    "false_answer": 0.125,
-    "n_answerable": 19,
-    "n_unanswerable": 8,
+    "recall_at_k": 0.5,
+    "mrr": 0.3333333333333333,
+    "false_abstain": 0.25,
+    "false_answer": 0.14285714285714285,
+    "n_answerable": 20,
+    "n_unanswerable": 7,
     "chunk_size": 1200,
     "overlap": 200,
     "n_chunks": 379

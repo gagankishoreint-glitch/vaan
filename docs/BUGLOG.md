@@ -271,3 +271,20 @@ so its 8000 TPM bucket never emptied. Managed vs naive came out *identical*.
 **Fix.** Stand-in reads `max_completion_tokens` with `max_tokens` as fallback.
 **Lesson.** A green comparison against a stale binary is indistinguishable from a
 null result. Both policies reported the same numbers; that was the tell.
+
+## BUG-015 · L2 eval · M3 was answerable but had an empty gold
+**Cause.** M3 ("what problem does full-duplex dialogue modelling solve") was typed
+`single` and given `gold: []`. Its gold chunk exists and states the answer
+verbatim: `moshi-v1:s1:c0002`, "fundamentally turn-based, assuming that dialogue is
+a sequence of well-defined single-speaker segments".
+**Effect.** M3 counted as an unanswerable question, inflating the false-answer rate
+and deflating recall. Every retrieval number in P3 was wrong by one to three
+questions until it was fixed.
+**How it was found.** The new `scripts/check_questions.py` rejected `type=single`
+with empty gold. The fault was invisible to every other check.
+**Fix.** Gold set from a verbatim-verified quote; the checker now enforces that
+only `ambiguous` and `unanswerable` may have no gold, and that every gold id
+resolves against the index.
+**Lesson.** The same class of error as BUG-003, caught by the same class of check.
+A metric that cannot distinguish "no gold" from "gold not found yet" will silently
+report a number.

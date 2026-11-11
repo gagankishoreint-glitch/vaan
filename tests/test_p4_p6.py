@@ -243,3 +243,42 @@ def test_reasoning_effort_none_is_refused():
     with pytest.raises(ValueError, match="never be"):
         gw.request_payload(model="openai/gpt-oss-20b", messages=[],
                            max_tokens=10, reasoning_effort="none")
+
+
+# ---------------------------------------------------------------- eval set
+
+def test_checker_rejects_unknown_gold_id():
+    from scripts.check_questions import check
+    q = [{"qid": "X", "author": "me", "type": "single", "paper": "attention",
+          "question": "q", "answer": "a", "gold": ["attn-v7:s1:c9999"]}]
+    faults = check(q, {"attn-v7:s1:c0000"})
+    assert any("not in the index" in f for f in faults), faults
+
+
+def test_checker_rejects_gold_on_unanswerable():
+    from scripts.check_questions import check
+    q = [{"qid": "X", "author": "me", "type": "unanswerable", "paper": None,
+          "question": "q", "answer": "a", "gold": ["attn-v7:s1:c0000"]}]
+    assert any("unanswerable but gold" in f for f in check(q, {"attn-v7:s1:c0000"}))
+
+
+def test_checker_rejects_missing_gold_on_answerable():
+    from scripts.check_questions import check
+    q = [{"qid": "X", "author": "me", "type": "single", "paper": "attention",
+          "question": "q", "answer": "a", "gold": []}]
+    assert any("gold is empty" in f for f in check(q, set()))
+
+
+def test_checker_allows_missing_gold_on_ambiguous():
+    from scripts.check_questions import check
+    q = [{"qid": "X", "author": "me", "type": "ambiguous", "paper": "moshi",
+          "question": "q", "answer": "a", "gold": []}]
+    assert check(q, set()) == []
+
+
+def test_every_question_has_an_author():
+    import json
+    rows = [json.loads(l) for l in open("data/eval/questions.jsonl") if l.strip()]
+    assert rows and all(r.get("author") for r in rows)
+    assert all(r["author"] in ("agent_draft", "me") for r in rows), \
+        {r["author"] for r in rows}

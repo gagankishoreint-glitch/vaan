@@ -154,13 +154,13 @@ has stopped meaning anything.
 **Decision.** `retrieval.gate_threshold: 15.86` is committed and the gate admits
 when top-1 >= it. It is deliberately not tuned to minimise false-answers.
 **Why.** The P3 threshold sweep evaluates every achievable operating point across
-19 answerable and 8 unanswerable questions, and finds **no threshold with both
-errors at zero**; the best point (14.82) still misclassifies 4 of 27. A strict gate
+20 answerable and 7 unanswerable questions, and finds **no threshold with both
+errors at zero**; the best point (14.82) still misclassifies 3 of 27. A strict gate
 would refuse real questions at a measured rate. The gate can therefore only be a
 cost control, never a correctness mechanism: H1 is guaranteed by `verify.py`
 afterwards. Verification is the guarantee; the gate decides how often it is needed.
-**Not tuned to 14.82.** The improvement over 15.86 is one question on n=27 —
-inside sampling noise. Fitting to it would be fitting to noise; the point stays at
-the value derived before the sweep was run.
+**Not tuned to 14.82.** Three questions separate it from 15.86 at n=27. Picking the
+argmin of a sweep over 27 questions is fitting to noise; the fix is a larger eval
+set, not a better threshold.
 **Rules out.** Treating the BM25 score as the safety mechanism.
 **Re-open at P10.** If a reranker improves separation, the gate can tighten.
