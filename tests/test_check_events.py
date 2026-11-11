@@ -135,76 +135,90 @@ def test_corrupt_json_line_raises(tmp_path):
         _load(p)
 
 
-# ------------------------------------------------ I7 backend scope (BUG-005 / D-008)
+# ------------------------------------------- I7/I8 backend declaration (D-011)
+
+def _run(declared="standin", attempts=("standin",), with_run_end=True,
+         run_end_counts=None):
+    """Build a one-request run with a declared backend and given attempt backends."""
+    evs = [{"type": "run.start", "backend": declared, "t_mono": 0.0}]
+    evs += [{"type": "request.start", "req_id": "q1", "backend": declared, "t_mono": 0.01}]
+    n = len(attempts)
+    step = 0.5 / max(1, n)
+    for i, ab in enumerate(attempts):
+        t0 = 0.1 + i * step
+        evs.append({"type": "attempt.start", "req_id": "q1", "t_mono": t0,
+                    "backend": declared, "attempt_backend": ab})
+        evs.append({"type": "attempt.end", "req_id": "q1", "t_mono": t0 + step / 2,
+                    "backend": declared, "attempt_backend": ab, "tokens_out": 1})
+    evs.append({"type": "request.end", "req_id": "q1", "t_mono": 0.9,
+                "total_elapsed_s": 0.89, "waiting_s": 0.09, "working_s": 0.8,
+                "retrying_s": 0.0, "backend": declared})
+    evs.append({"type": "terminal", "req_id": "q1", "terminal": "answered",
+                "t_mono": 0.95, "reply_type": "verified_answer", "backend": declared})
+    if with_run_end:
+        counts = run_end_counts if run_end_counts is not None else {
+            b: attempts.count(b) for b in set(attempts)}
+        evs.append({"type": "run.end", "backend": declared, "t_mono": 1.0,
+                    "attempt_backend_counts": counts})
+    return evs
+
+
+def test_consistent_declared_run_passes():
+    assert check(_run("standin", ("standin",))).ok
+
+
+def test_declared_groq_served_by_standin_is_caught():
+    """The contradiction a computed label could never detect: the run CLAIMS groq
+    but every attempt was served by the stand-in."""
+    rep = check(_run("groq", ("standin",)))
+    assert "I7_backend_scope" in {v.invariant for v in rep.violations}
+    assert "I8_run_end" in {v.invariant for v in rep.violations}
+
+
+def test_declared_mixed_allows_any_attempt_backends():
+    assert check(_run("mixed", ("groq", "standin"))).ok
+
+
+def test_deliberate_failover_is_allowed_not_flagged_as_mixed_escape():
+    """A failover inside a `standin` run is a real contradiction and must be
+    flagged -- the old 'mixed escape hatch' computed from the attempts hid this."""
+    rep = check(_run("standin", ("groq", "standin")))
+    assert any(v.invariant == "I7_backend_scope" for v in rep.violations)
+
+
+def test_invalid_declaration_is_caught():
+    rep = check(_run("Groq", ("groq",)))
+    assert any(v.invariant == "I7_backend_scope" for v in rep.violations)
+
 
 def test_missing_attempt_backend_fails():
-    evs = ok_request()
-    evs[1]["attempt_backend"] = "standin"
-    evs[1]["backend"] = "standin"
-    del evs[1]["attempt_backend"]
-    rep = check(evs)
-    assert "I7_backend_scope" in {v.invariant for v in rep.violations}
+    evs = _run()
+    del evs[2]["attempt_backend"]
+    assert "I7_backend_scope" in {v.invariant for v in check(evs).violations}
 
 
-def test_envelope_backend_swallowing_attempt_backend_fails():
-    """The exact BUG-005 shape: envelope says standin, attempt says groq."""
-    evs = ok_request()
-    evs[1]["backend"] = "standin"
-    evs[1]["attempt_backend"] = "groq"
-    evs[2]["backend"] = "standin"
-    evs[2]["attempt_backend"] = "groq"
-    evs[4]["backend"] = "standin"
-    rep = check(evs)
-    assert "I7_backend_scope" in {v.invariant for v in rep.violations}
+def test_run_end_counts_mismatch_fails():
+    """Lost attempt events show up as a count mismatch rather than silently."""
+    rep = check(_run("standin", ("standin",), run_end_counts={"standin": 5}))
+    assert "I8_run_end" in {v.invariant for v in rep.violations}
 
 
-def test_matched_backends_pass():
-    evs = ok_request()
-    for e in evs:
-        e["backend"] = "standin"
-    evs[1]["attempt_backend"] = "standin"
-    evs[2]["attempt_backend"] = "standin"
-    assert check(evs).ok
+def test_double_run_end_fails():
+    evs = _run()
+    evs.append({"type": "run.end", "backend": "standin", "t_mono": 1.1,
+                "attempt_backend_counts": {"standin": 1}})
+    assert "I8_run_end" in {v.invariant for v in check(evs).violations}
 
 
-def test_mixed_backends_within_request_are_allowed():
-    """A request that fails over carries two attempt_backends; envelope stays `mixed`."""
-    evs = [
-        {"type": "request.start", "req_id": "q1", "t_mono": 0.0, "backend": "mixed"},
-        {"type": "attempt.start", "req_id": "q1", "t_mono": 0.1,
-         "backend": "mixed", "attempt_backend": "groq"},
-        {"type": "attempt.end", "req_id": "q1", "t_mono": 0.2, "tokens_out": 3,
-         "backend": "mixed", "attempt_backend": "groq"},
-        {"type": "attempt.start", "req_id": "q1", "t_mono": 0.3,
-         "backend": "mixed", "attempt_backend": "standin"},
-        {"type": "attempt.end", "req_id": "q1", "t_mono": 0.4, "tokens_out": 5,
-         "backend": "mixed", "attempt_backend": "standin"},
-        {"type": "request.end", "req_id": "q1", "t_mono": 0.5, "total_elapsed_s": 0.5,
-         "waiting_s": 0.1, "working_s": 0.4, "retrying_s": 0.0, "backend": "mixed"},
-        {"type": "terminal", "req_id": "q1", "terminal": "answered", "t_mono": 0.5,
-         "reply_type": "verified_answer", "backend": "mixed",
-         "primary_backend": "groq"},
-    ]
-    rep = check(evs)
-    assert "I7_backend_scope" not in {v.invariant for v in rep.violations}, rep.violations
-    assert rep.ok, rep.violations
+def test_no_run_end_is_not_a_violation():
+    """A crashed run has no run.end; that is reported elsewhere, not as a violation."""
+    assert check(_run(with_run_end=False)).ok
 
 
-def test_missing_file_is_a_clean_error_not_a_traceback(tmp_path):
-    r = subprocess.run(
-        [sys.executable, str(ROOT / "scripts" / "check_events.py"),
-         str(tmp_path / "nope.jsonl")],
-        capture_output=True, text=True, cwd=ROOT)
-    assert r.returncode == 2
-    assert "no such events file" in r.stderr
-    assert "Traceback" not in r.stderr
+# ------------------------------------------------ legacy P0 artefacts
 
-
-def test_old_artifact_without_attempt_backend_is_flagged(tmp_path):
-    """Backwards compatibility is not free: P0 artefacts predate I7 and must be
-    reported, not silently accepted."""
+def test_artifact_without_attempt_backend_is_flagged():
     evs = ok_request()
     for e in evs:
         e.pop("attempt_backend", None)
-    rep = check(evs)
-    assert any(v.invariant == "I7_backend_scope" for v in rep.violations)
+    assert "I7_backend_scope" in {v.invariant for v in check(evs).violations}

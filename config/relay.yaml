@@ -43,6 +43,10 @@ gateway:
   queue_max: null                     # set by P1: depth at which admission starts queueing/shedding
   breaker: {fail_threshold: 5, open_s: 10}
   retry_jitter_frac: 0.0              # set by P9: raised if the harness shows retry synchronisation
+  # A 429 is treated as a DAY limit if retry-after is at least this. Deliberately
+  # null: the probe classifies from remaining_rpd and the body text first, and
+  # records why. Set only once the real day-limit retry-after is observed (Q-09).
+  day_429_min_retry_after_s: null     # set by P1 Q-09: observed day-limit retry-after
   request_deadline_s: null            # set by L5: user patience minus reply-render margin
 
 ladder:

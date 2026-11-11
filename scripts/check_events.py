@@ -12,9 +12,11 @@ Invariants checked here (the ones decidable from events alone):
   I4  waiting + working + retrying ~= total (using counted sleeps)
   I5  no reply emitted that is not a permitted reply type
   I6  no tokens consumed after abandon
-  I7  backend scope: an attempt event's envelope `backend` must match its
-      `attempt_backend` unless the run genuinely mixed backends (else the
-      per-attempt value was lost -- BUG-005)ment
+  I7  backend scope: the DECLARED run backend must be in {groq, standin, mixed},
+      every attempt must carry `attempt_backend`, and for a non-mixed declaration
+      every attempt_backend must equal it (a `groq` run served by `standin` is a
+      contradiction, not a label)
+  I8  run.end: attempt_backend_counts sums to the number of attempts (lost events)ment
 
 Usage:
     python scripts/check_events.py runs/<run>/events.jsonl [--json]
@@ -58,6 +60,7 @@ class Report:
             "n_events": self.n_events,
             "n_requests": self.n_requests,
             "ok": self.ok,
+            "declared_backend": None,
             "counts": self.counts,
             "violations": [v.__dict__ for v in self.violations],
         }
@@ -87,6 +90,35 @@ def check(events: Iterable[dict], latency_tol_s: float = 0.05) -> Report:
         if req is not None:
             by_req[req].append(ev)
     rep.n_requests = len(by_req)
+
+    # The run's DECLARATION, taken from the envelope of the first event that has it.
+    declared = next((ev.get("backend") for ev in events if ev.get("backend")), None)
+    if declared is not None and declared not in ("groq", "standin", "mixed"):
+        rep.violations.append(Violation(
+            "I7_backend_scope", None,
+            f"declared backend={declared!r} is not one of groq/standin/mixed"))
+
+    # I8 run.end consistency
+    run_ends = [e for e in events if e.get("type") == "run.end"]
+    if len(run_ends) > 1:
+        rep.violations.append(Violation(
+            "I8_run_end", None, f"{len(run_ends)} run.end events, want at most 1"))
+    for re_ in run_ends:
+        counts = re_.get("attempt_backend_counts")
+        if not isinstance(counts, dict):
+            continue
+        n_attempts = sum(1 for e in events if e.get("type") == "attempt.start")
+        if sum(counts.values()) != n_attempts:
+            rep.violations.append(Violation(
+                "I8_run_end", None,
+                f"attempt_backend_counts sums to {sum(counts.values())} but there "
+                f"are {n_attempts} attempt.start events"))
+        if declared in ("groq", "standin"):
+            foreign = {k: v for k, v in counts.items() if k != declared}
+            if foreign:
+                rep.violations.append(Violation(
+                    "I8_run_end", None,
+                    f"run declared {declared!r} but attempts were served by {foreign}"))
 
     for req_id, evs in by_req.items():
         terminals = [e for e in evs if e.get("type") in TERMINAL_TYPES]
@@ -158,23 +190,22 @@ def check(events: Iterable[dict], latency_tol_s: float = 0.05) -> Report:
             rep.violations.append(Violation(
                 "I4_latency_sum", req_id, "retry sleeps recorded but no request.end totals"))
 
-        # I7 backend scope: attempt_backend must be present, and must agree with the
-        # envelope unless this request mixed backends (D-008).
-        mixed = len({e.get("attempt_backend") for e in evs
-                     if e.get("type") in ATTEMPT_TYPES and e.get("attempt_backend")}) > 1
+        # I7 backend scope. `declared` comes from the envelope (a construction-time
+        # declaration), never from the attempts it describes -- a label computed
+        # from the data cannot contradict the data.
         for e in evs:
             if e.get("type") not in ATTEMPT_TYPES:
                 continue
-            ab, env = e.get("attempt_backend"), e.get("backend")
+            ab = e.get("attempt_backend")
             if ab is None and e.get("type") == "attempt.start":
                 rep.violations.append(Violation(
                     "I7_backend_scope", req_id,
                     "attempt.start has no attempt_backend: per-attempt provenance lost"))
-            elif ab is not None and env is not None and ab != env and not mixed:
+            elif ab is not None and declared in ("groq", "standin") and ab != declared:
                 rep.violations.append(Violation(
                     "I7_backend_scope", req_id,
-                    f"envelope backend={env!r} != attempt_backend={ab!r} "
-                    f"with no mixed backends in this request"))
+                    f"run declared backend={declared!r} but an attempt was served by "
+                    f"{ab!r}: the declaration is false"))
 
     # I3 no negative bucket
     for ev in events:

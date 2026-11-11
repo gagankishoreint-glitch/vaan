@@ -154,3 +154,54 @@ envelope unless that request genuinely mixed backends.
 `test_primary_backend_is_majority`, `test_primary_backend_tie_falls_back_to_first_appearance`,
 `test_primary_backend_none_without_attempts`, and four `I7` cases in
 `tests/test_check_events.py` including the exact BUG-005 shape.
+
+---
+
+## BUG-006 · L4 pipeline · chunk overlap started mid-word (H2)
+**Layer.** L4 (pipeline), ingest.
+
+**Cause.** `start = end - overlap` landed inside a word, so the overlap head was a
+word fragment. A quote spanning that boundary is a substring of *neither* chunk, so
+`verify()` would reject a correct answer and `PassagesOnly` would replace a good
+reply — a hard-rule H2 failure presenting as a mysterious quality problem.
+
+**Why tests missed it.** The first test asserted "every word appears in some chunk".
+That assertion **cannot fail**: even a splitter that hard-cuts mid-word loses no
+characters. It was a tautology dressed as a check.
+
+**Fix.** Snap the next start forward to the first whitespace boundary.
+
+**Regression tests.** `test_no_chunk_starts_or_ends_mid_word`,
+`test_adjacent_chunks_overlap_by_a_whole_word` (asserts real words are shared).
+
+## BUG-007 · L4 pipeline · 17.6% of chunks contain a table caption, unflagged
+**Layer.** L4 (pipeline), ingest quality.
+
+**Cause.** No caption detection. `attn-v7:s3.4:c0000` was flagged `ok` while
+containing `Table 1: Maximum path lengths...` followed by mangled header cells.
+
+**Why it matters.** This is the mechanism behind "the library misleads the retriever",
+and it was invisible: 50 of 449 `ok` chunks were contaminated.
+
+**Fix.** `caption` / `caption_lead` flags. Chunks are kept deliberately — they are the
+evidence the retrieval section cites.
+
+**Regression test.** `test_real_corpus_caption_rate_is_measured` pins the rate so a
+chunking change that doubles it is visible.
+
+## BUG-008 · L4 pipeline · heading detection required bold; moshi/hnet are not bold
+**Layer.** L4 (pipeline), ingest.
+
+**Cause.** Three separate errors in one condition: (a) the size test was only applied
+inside the one-line branch, so a bare `2.2` line never qualified; (b) the two-line
+heading path required the *next* line to be bold, which it never is in moshi/hnet;
+(c) the whole-detection gate required bold, and 12pt regular headings are the norm.
+Result: **hnet produced 0 chunks and moshi 7 sections** out of ~30.
+
+**Fix.** Heading = bold OR clearly larger than body; the split-heading path accepts a
+non-bold title; body-sized numbered lines are accepted via the monotonicity rule.
+
+**Regression tests.** `test_size_only_heading_not_bold`,
+`test_body_sized_numbered_heading_accepted_by_sequence`,
+`test_split_heading_across_two_lines`, and the integration guard
+`test_real_pdfs_produce_sane_sections`.

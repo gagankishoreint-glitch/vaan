@@ -201,9 +201,30 @@ def test_reserved_field_collision_raises(tmp_path):
 
     with EventLog(str(tmp_path), run_id="r1", backend="standin") as lg:
         for bad in ({"run_id": "spoofed"}, {"t_mono": 0.0}, {"t_wall": 0.0},
-                    {"type": "spoofed"}, {"backend": "spoofed"}):
+                    {"type": "spoofed"}):
             with pytest.raises(ReservedFieldError):
                 lg.emit("x", **bad)
+
+
+def test_backend_is_not_reserved_at_the_shared_channel(tmp_path):
+    """`backend` is run scope on run events and attempt scope on attempt events;
+    both go through emit(), so it cannot be rejected there (D-011)."""
+    with EventLog(str(tmp_path), run_id="r1", backend="standin") as lg:
+        s = lg.request("q1")
+        s.attempt_start(_attempt("a1", "groq"))
+        lg.flush()
+        evs = read_events(lg.path)
+    assert evs[0]["backend"] == "standin"        # envelope
+    assert evs[0]["attempt_backend"] == "groq"   # attempt scope
+
+
+def test_request_scope_rejects_backend_override(tmp_path):
+    from relay.events import ReservedFieldError
+
+    with EventLog(str(tmp_path), run_id="r1", backend="standin") as lg:
+        s = lg.request("q1")
+        with pytest.raises(ReservedFieldError):
+            s.emit("request.start", backend="groq")
 
 
 def test_req_id_is_not_reserved(tmp_path):
@@ -250,43 +271,61 @@ def test_attempt_backend_is_the_attempt_value_and_backend_is_run_scope(tmp_path)
     assert "backend" not in start or start["backend"] == "standin"
 
 
-def test_primary_backend_is_majority(tmp_path):
+def _attempt(aid: str, backend: str):
     from relay.contracts import Attempt
+    return Attempt(aid, "q1", "draft", backend, "m", t_sent=0.0)
 
+
+def test_declared_backend_is_validated(tmp_path):
+    """The label is a DECLARATION; anything outside the vocabulary is a typo bug."""
+    for bad in ("Groq", "production", "", "grok"):
+        with pytest.raises(ValueError, match="must be one of"):
+            EventLog(str(tmp_path), run_id="r1", backend=bad)
+
+
+def test_declared_backend_survives_unrelated_attempts(tmp_path):
+    """A `mixed` declaration is not overwritten by what the attempts did."""
     with EventLog(str(tmp_path), run_id="r1", backend="mixed") as lg:
-        s = lg.request("q1")
         for i, be in enumerate(["groq", "standin", "standin"]):
-            a = Attempt(f"a{i}", "q1", "draft", be, "m", t_sent=0.0)
-            s.attempt_start(a)
-            a.t_end = 1.0
-            s.attempt_end(a)
-        assert s.primary_backend == "standin"
-        s.finish("answered", total_elapsed_s=1.0, waiting_s=0.0,
-                 working_s=1.0, retrying_s=0.0)
+            sc = lg.request(f"q{i}")
+            sc.attempt_start(_attempt(f"a{i}", be))
+            sc.finish("answered", total_elapsed_s=1.0, waiting_s=0.0,
+                      working_s=1.0, retrying_s=0.0)
         lg.flush()
-        term = [e for e in read_events(lg.path) if e["type"] == "terminal"][0]
-    assert term["primary_backend"] == "standin"
+        evs = read_events(lg.path)
+    assert {e["backend"] for e in evs if "backend" in e} == {"mixed"}
 
 
-def test_primary_backend_tie_falls_back_to_first_appearance(tmp_path):
-    from relay.contracts import Attempt
-
+def test_run_end_reports_observed_counts(tmp_path):
     with EventLog(str(tmp_path), run_id="r1", backend="mixed") as lg:
-        s = lg.request("q1")
-        for i, be in enumerate(["groq", "standin"]):
-            a = Attempt(f"a{i}", "q1", "draft", be, "m", t_sent=0.0)
-            s.attempt_start(a)
+        for i, be in enumerate(["groq", "groq", "standin"]):
+            sc = lg.request(f"q{i}")
+            a = _attempt(f"a{i}", be)
+            sc.attempt_start(a)
             a.t_end = 1.0
-            s.attempt_end(a)
-        assert s.primary_backend == "groq"
-
-
-def test_primary_backend_none_without_attempts(tmp_path):
-    with EventLog(str(tmp_path), run_id="r1", backend="standin") as lg:
-        s = lg.request("q1")
-        assert s.primary_backend is None
-        s.finish("no_evidence", total_elapsed_s=0.1, waiting_s=0.0,
-                 working_s=0.1, retrying_s=0.0)
+            sc.attempt_end(a)
+            sc.finish("answered", total_elapsed_s=1.0, waiting_s=0.0,
+                      working_s=1.0, retrying_s=0.0)
+        lg.end_run(n_requests=3)
         lg.flush()
-        term = [e for e in read_events(lg.path) if e["type"] == "terminal"][0]
-    assert term["primary_backend"] is None
+        evs = read_events(lg.path)
+    end = [e for e in evs if e["type"] == "run.end"][0]
+    assert end["attempt_backend_counts"] == {"groq": 2, "standin": 1}
+    assert end["n_requests"] == 3
+
+
+def test_run_end_twice_raises(tmp_path):
+    with EventLog(str(tmp_path), run_id="r1", backend="standin") as lg:
+        lg.end_run()
+        with pytest.raises(RuntimeError):
+            lg.end_run()
+
+
+def test_close_does_not_emit_run_end(tmp_path):
+    """A crashed run must be distinguishable from a clean one by the absence of
+    run.end, so close() must never write it."""
+    with EventLog(str(tmp_path), run_id="r1", backend="standin") as lg:
+        lg.emit("x")
+        lg.flush()
+        evs = read_events(lg.path)
+    assert not [e for e in evs if e["type"] == "run.end"]

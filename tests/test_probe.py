@@ -65,7 +65,7 @@ def test_dry_run_never_touches_the_network(tmp_path):
         elif mode == "reasoning":
             probe.mode_reasoning("reasoning_effort", ["low"])
         elif mode == "bigctx":
-            probe.mode_bigctx(2)
+            probe.mode_bigctx(10_000)
         elif mode == "cache":
             probe.mode_cache()
         elif mode == "burst":
@@ -410,3 +410,105 @@ def test_est_tokens_overestimates_english():
     text = "a" * 400
     assert est_tokens(text) >= 400 / 4
     assert est_tokens("") == 1
+
+
+# ----------------------------------------------------------------- bigctx sizing (D-012)
+
+def test_bigctx_defaults_to_just_over_tpm():
+    """Sizing by repeat count made bigctx depend on a chars/token guess; sizing by
+    tokens ties it to the limit read off the limits page."""
+    from scripts.probe import build_parser
+    cfg = load_config("config/relay.yaml")
+    args = build_parser().parse_args(["--mode", "bigctx"])
+    assert args.bigctx_tokens is None
+    assert int(cfg.get("models.small.tpm") * 1.25) == 10_000      # 8K * 1.25
+
+
+def test_bigctx_repeat_is_rejected_loudly(tmp_path, capsys):
+    monkeypatch_ok = True
+    rc = main(["--mode", "bigctx", "--bigctx-repeat", "400",
+               "--run-dir", str(tmp_path / "r")])
+    assert rc == 2
+    assert "--bigctx-repeat is gone" in capsys.readouterr().err
+
+
+def test_bigctx_prompt_lands_near_the_target(tmp_path):
+    seen = {}
+
+    def handler(request):
+        body = json.loads(request.content)
+        seen["chars"] = len(body["messages"][0]["content"])
+        seen["model"] = body["model"]
+        return httpx.Response(200, json={"usage": {"total_tokens": 5}})
+
+    probe = make_probe(tmp_path, handler)
+    probe.mode_bigctx(10_000)
+    from scripts.probe import est_tokens
+    assert 9_000 <= est_tokens("x" * seen["chars"]) <= 11_000
+    assert seen["model"] == "m-large", "bigctx must hit the large model"
+
+
+def test_bigctx_uses_estimate_that_overshoots():
+    """Under-shooting would fail to exceed TPM and answer nothing."""
+    from scripts.probe import est_tokens
+    target = 10_000
+    chars = target * 3
+    assert est_tokens("x" * chars) >= target
+
+
+# ------------------------------------------------------------------- rpd classification
+
+@pytest.mark.parametrize("rl,body,expect", [
+    ({"remaining_rpd": 0, "remaining_tpm": 500}, "", "rpd"),
+    ({"remaining_rpd": 900, "remaining_tpm": 0}, "", "tpd_or_tpm"),
+    ({}, '{"error":"tokens per day exceeded"}', "tpd_or_tpm"),
+    ({}, '{"error":"rate limit exceeded for requests"}', "rpd"),
+    ({}, "something else", "unclassified"),
+])
+def test_which_limit_tripped(rl, body, expect):
+    from scripts.probe import _which_limit
+    r = type("R", (), {"rl": rl, "body": body})()
+    assert _which_limit(r) == expect
+
+
+def test_rpd_records_which_limit_hit_first(tmp_path):
+    def handler(request):
+        return httpx.Response(429, text='{"error":"tokens per day exceeded"}',
+                              headers={"retry-after": "3600",
+                                       "x-ratelimit-remaining-requests": "900",
+                                       "x-ratelimit-remaining-tokens": "0"})
+
+    probe = make_probe(tmp_path, handler)
+    probe.mode_rpd(tiny=3, rpm=30, max_requests=5)
+    claims = [c for q, c, a in probe.evidence if q == "Q-09"]
+    assert claims, probe.evidence
+    assert "day_limit=True" in claims[0]
+    assert "first limit tripped=tpd_or_tpm" in claims[0]
+    assert (tmp_path / "run" / "raw" / "rpd_limit_order.txt").is_file()
+
+
+# --------------------------------------------------- day-vs-minute 429 classification
+
+@pytest.mark.parametrize("rl,body,threshold,expect", [
+    ({"remaining_rpd": 0, "retry_after_s": 30}, "", None, True),
+    ({"remaining_rpd": 900, "retry_after_s": 30}, "", None, False),
+    ({"remaining_rpd": 900, "retry_after_s": 30}, "exceeded tokens per day", None, True),
+    ({"remaining_rpd": 900, "retry_after_s": 3600.0}, "", 3600, True),
+    ({"remaining_rpd": 900, "retry_after_s": 3600.0}, "", None, False),
+    ({"remaining_rpd": 900, "retry_after_s": 2}, "rate limited", None, False),
+])
+def test_classify_day_429(rl, body, threshold, expect):
+    from scripts.probe import classify_day_429
+    r = type("R", (), {"rl": rl, "body": body})()
+    verdict, why = classify_day_429(r, threshold)
+    assert verdict is expect, why
+    assert why
+
+
+def test_exactly_one_hour_retry_after_is_not_misclassified():
+    """The off-by-one: `retry_after > 3600` missed a day limit that says exactly
+    3600. Boundary values are the ones that bite."""
+    from scripts.probe import classify_day_429
+    r = type("R", (), {"rl": {"retry_after_s": 3600.0, "remaining_rpd": 900}, "body": ""})()
+    assert classify_day_429(r, 3600)[0] is True
+    assert classify_day_429(r, 3600.001)[0] is False

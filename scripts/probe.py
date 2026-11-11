@@ -100,6 +100,54 @@ def est_tokens(text: str) -> int:
     return max(1, math.ceil(len(text) / 3))
 
 
+def classify_day_429(r: Result, min_retry_after_s: Optional[float] = None) -> tuple[bool, str]:
+    """Is this 429 a DAY limit? Returns (verdict, why).
+
+    Three signals, in order of reliability, and the reason is recorded so the
+    classification is auditable rather than asserted:
+      1. `remaining-rpd <= 0` -- the daily request count is provably exhausted.
+      2. the body says so ("per day" / "daily") -- the provider's own words.
+      3. `retry-after >= min_retry_after_s`, only if that threshold is configured.
+    An arbitrary `retry-after > 3600` test is NOT used: 3600.0 is a plausible
+    exact value for a day limit, and a `>` there misclassifies it (found by a test).
+    """
+    rl = r.rl or {}
+    rem_rpd = rl.get("remaining_rpd")
+    if rem_rpd is not None and rem_rpd <= 0:
+        return True, "remaining_rpd<=0"
+    body = (r.body or "").lower()
+    for token in ("per day", "daily", "day limit", "per-day"):
+        if token in body:
+            return True, f"body contains {token!r}"
+    ra = rl.get("retry_after_s")
+    if min_retry_after_s is not None and ra is not None and ra >= min_retry_after_s:
+        return True, f"retry_after={ra}s >= configured {min_retry_after_s}s"
+    if ra is not None:
+        return False, f"retry_after={ra}s, no day evidence"
+    return False, "no day evidence and no retry_after"
+
+
+def _which_limit(r: Result) -> str:
+    """Classify a 429 by the remaining values, not by the wording of the body.
+
+    UNVERIFIED heuristic, and deliberately reported as a classification with its
+    inputs attached: if requests remain but tokens do not, the token bucket is the
+    one that tripped.
+    """
+    rem_rpd = (r.rl or {}).get("remaining_rpd")
+    rem_tpm = (r.rl or {}).get("remaining_tpm")
+    if rem_rpd is not None and rem_rpd <= 0:
+        return "rpd"
+    if rem_tpm is not None and rem_tpm <= 0:
+        return "tpd_or_tpm"
+    body = (r.body or "").lower()
+    if "token" in body and "request" not in body:
+        return "tpd_or_tpm"
+    if "request" in body:
+        return "rpd"
+    return "unclassified"
+
+
 def truncate(text: str, limit: int = MAX_BODY_LOG) -> str:
     if len(text) <= limit:
         return text
@@ -614,14 +662,30 @@ class Probe:
                 self.rec.raw(f"reasoning_{v}_error.txt", r.body)
         return out
 
-    def mode_bigctx(self, repeat: int) -> list[Result]:
-        filler = ("The quick brown fox jumps over the lazy dog. " * 40 + "\n")
-        prompt = "Summarise in one word.\n" + filler * max(1, repeat)
-        r = self.chat(mode="bigctx", label="bigctx", model=self.models["large"],
+    def mode_bigctx(self, target_tokens: int) -> list[Result]:
+        """One request just over the per-minute token limit.
+
+        The question is narrow: what happens when a SINGLE request exceeds TPM?
+        Sizing by a repeat count made that depend on a chars/token guess (a
+        400-repeat prompt estimated at 240K -- 4x the day plan). Sizing by a token
+        target ties the prompt to the limit read off the limits page, so the request
+        is 'just over TPM' by construction. A rejection costs almost nothing; an
+        acceptance costs about target_tokens.
+        """
+        # est_tokens() assumes chars/3, so this builds a prompt whose ESTIMATE
+        # lands on the target. Deliberately over-shoots rather than undershoots.
+        chars = max(1, target_tokens * 3)
+        filler_unit = "The quick brown fox jumps over the lazy dog. "
+        prompt = "Summarise in one word.\n" + (filler_unit * (chars // len(filler_unit) + 1))[:chars]
+        r = self.chat(mode="bigctx", label=f"bigctx-{target_tokens}", model=self.models["large"],
                       messages=self._msgs(prompt), max_tokens=16)
         if not self.dry_run and r.status is not None:
+            verdict = ("accepted despite exceeding TPM" if r.status == 200
+                       else "rejected up front (cheap)")
             self.note("Q-12",
-                      f"status={r.status} body={r.body[:300]!r} prompt_chars={len(prompt)}",
+                      f"status={r.status} ({verdict}) "
+                      f"estimated_prompt_tokens={target_tokens} "
+                      f"actual_usage={r.usage} body={r.body[:300]!r}",
                       "bigctx.jsonl")
         return [r]
 
@@ -729,14 +793,26 @@ class Probe:
                                          "wall_clock_utc": datetime.now(timezone.utc)
                                          .isoformat()}, indent=2))
                 ra = r.rl.get("retry_after_s")
-                is_day = ra is not None and ra > 3600
+                is_day, why_day = classify_day_429(
+                    r, self.cfg.get("gateway.day_429_min_retry_after_s", None))
+                # WHICH limit tripped is itself the finding: if TPD goes before
+                # RPD, tokens are the binding constraint and the budget model
+                # changes. Both remaining values are recorded to decide it.
+                which = _which_limit(r)
                 self.note("Q-09" if is_day else "Q-04",
-                          f"429 after {i + 1} tiny calls; retry_after={ra}s "
-                          f"reset_requests={r.rl.get('reset_rpd_s')} "
+                          f"429 after {i + 1} tiny calls; day_limit={is_day} ({why_day}); "
+                          f"first limit tripped={which} "
+                          f"retry_after={ra}s reset_requests={r.rl.get('reset_rpd_s')} "
                           f"remaining_rpd={r.rl.get('remaining_rpd')} "
+                          f"remaining_tpm={r.rl.get('remaining_tpm')} "
                           f"wall={datetime.now(timezone.utc).isoformat()} "
                           f"body={r.body[:200]!r}",
                           "raw/rpd_first_429.json")
+                if which == "tpd_or_tpm":
+                    self.rec.raw("rpd_limit_order.txt",
+                                 "TPD/TPM tripped before RPD: tokens are the binding "
+                                 f"constraint. remaining_rpd={r.rl.get('remaining_rpd')} "
+                                 f"body={r.body[:300]}")
                 break
             self.sleep(interval)
         return out
@@ -780,7 +856,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--reasoning-param", default="reasoning_effort",
                    help="UNVERIFIED: confirm in the API reference before trusting")
     p.add_argument("--reasoning-values", default="low,medium,high")
-    p.add_argument("--bigctx-repeat", type=int, default=400)
+    p.add_argument("--bigctx-tokens", type=int, default=None,
+                   help="estimated prompt tokens for bigctx; default is "
+                        "1.25 x models.small.tpm, i.e. just over the per-minute limit")
+    # Kept so old invocations fail loudly rather than silently doing the wrong thing.
+    p.add_argument("--bigctx-repeat", type=int, default=None, help=argparse.SUPPRESS)
     p.add_argument("--rpd-max-requests", type=int, default=2000)
     p.add_argument("--plan-today", type=int, default=None,
                    help="today's token plan; written to the ledger")
@@ -860,6 +940,18 @@ def main(argv: Optional[list[str]] = None) -> int:
                   api_key=api_key, ceiling=ceiling, recorder=rec, dry_run=dry_run,
                   timeout=args.timeout, models=models)
 
+    if args.bigctx_repeat is not None:
+        print("error: --bigctx-repeat is gone. bigctx is now sized in tokens so it "
+              "can be tied to the measured TPM limit. Use --bigctx-tokens.",
+              file=sys.stderr)
+        return 2
+    tpm = cfg.get("models.small.tpm")
+    bigctx_tokens = args.bigctx_tokens or int(tpm * 1.25)
+    if args.bigctx_tokens is None and cfg.get("models.small.tpm") is None:
+        print("error: models.small.tpm is null, so bigctx cannot be sized. Pass "
+              "--bigctx-tokens explicitly.", file=sys.stderr)
+        return 2
+
     modes = resolve_modes(args.mode)
     print(f"probe v{PROBE_VERSION}  {'DRY RUN (no network)' if dry_run else 'LIVE'}")
     print(f"  run_dir   {run_dir}")
@@ -869,6 +961,9 @@ def main(argv: Optional[list[str]] = None) -> int:
     print(f"  ceiling   {args.max_tokens_total if args.max_tokens_total else '(none)'}"
           f"   day plan remaining={remaining_plan}")
     print(f"  modes     {modes}")
+    if "bigctx" in modes:
+        print(f"  bigctx    ~{bigctx_tokens} est tokens "
+              f"({bigctx_tokens / max(1, tpm):.2f}x TPM of {tpm})")
 
     started = now_mono()
     spent_before = ceiling.spent
@@ -887,7 +982,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                                      [v.strip() for v in args.reasoning_values.split(",")
                                       if v.strip()])
             elif mode == "bigctx":
-                probe.mode_bigctx(args.bigctx_repeat)
+                probe.mode_bigctx(bigctx_tokens)
             elif mode == "cache":
                 probe.mode_cache()
             elif mode == "burst":

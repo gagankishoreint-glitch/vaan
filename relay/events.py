@@ -9,14 +9,16 @@ EVENT ORDERING CONTRACT (violated once already, see docs/BUGLOG.md BUG-001):
 `request.end` carries the latency decomposition. The terminal event is LAST.
 Use finish() rather than emitting these two by hand.
 
-BACKEND SCOPE (DECISIONS D-008, decided by the supervisor after BUG-005):
-    envelope `backend`  = run scope: which backend this RUN used. For a run that
-                          mixes backends it is the PRIMARY backend (majority of
-                          attempts, first appearance breaks ties).
-    `attempt_backend`   = attempt scope: the backend that actually served THAT
-                          attempt. This is the field the naive-vs-managed
-                          comparison groups by.
-Before D-008 the envelope silently overwrote the per-attempt value.
+BACKEND SCOPE (DECISIONS D-011, which supersedes D-008):
+    envelope `backend`  = DECLARED at construction, one of {groq, standin, mixed}.
+                          A declaration, never derived from the attempts it
+                          describes (circular label -- supervisor review).
+    `attempt_backend`   = observed: the backend that actually served THAT attempt.
+                          This is the field the managed-vs-naive comparison uses.
+    `run.end`           = the observed breakdown, `attempt_backend_counts`.
+A declared `groq` run whose attempts were served by `standin` is therefore a
+detectable contradiction (checker I7), instead of a label that quietly agrees
+with whatever happened.
 """
 from __future__ import annotations
 
@@ -55,8 +57,10 @@ class RequestScope:
     analysis checker (L6) is the backstop, because a bug could bypass the scope.
     """
 
-    __slots__ = ("_log", "req_id", "_terminal_emitted", "_attempts", "_abandoned_at",
-                 "_backend_counts", "_backend_first")
+    __slots__ = ("_log", "req_id", "_terminal_emitted", "_attempts", "_abandoned_at")
+
+    #: A request-scoped event must never set the run-scope `backend`.
+    RESERVED_IN_SCOPE: Final[frozenset[str]] = frozenset({"backend"})
 
     def __init__(self, log: "EventLog", req_id: str):
         self._log = log
@@ -64,8 +68,6 @@ class RequestScope:
         self._terminal_emitted = False
         self._attempts: set[str] = set()
         self._abandoned_at: Optional[float] = None
-        self._backend_counts: dict[str, int] = {}
-        self._backend_first: list[str] = []
 
     # -- queries used by the pipeline/gateway
     @property
@@ -82,6 +84,12 @@ class RequestScope:
             raise TerminalEventAlreadyEmitted(
                 f"{self.req_id}: event {type_!r} emitted after terminal event"
             )
+        clash = self.RESERVED_IN_SCOPE.intersection(fields)
+        if clash:
+            raise ReservedFieldError(
+                f"{self.req_id}: request-scoped event {type_!r} tried to set run-scope "
+                f"field(s) {sorted(clash)}; use `attempt_backend` for per-attempt values"
+            )
         self._log.emit(type_, req_id=self.req_id, **fields)
 
     def emit_counts(self, name: str) -> None:
@@ -94,7 +102,7 @@ class RequestScope:
                 f"{self.req_id}: attempt {attempt.attempt_id} started after terminal"
             )
         self._attempts.add(attempt.attempt_id)
-        self._track_backend(getattr(attempt, "backend", None))
+        self._log.note_attempt_backend(getattr(attempt, "backend", None))
         self._log.emit(
             "attempt.start",
             req_id=self.req_id,
@@ -104,27 +112,6 @@ class RequestScope:
             model=attempt.model,
             t_sent=attempt.t_sent,
         )
-
-    def _track_backend(self, backend: Optional[str]) -> None:
-        if not backend:
-            return
-        self._backend_counts[backend] = self._backend_counts.get(backend, 0) + 1
-        if backend not in self._backend_first:
-            self._backend_first.append(backend)
-
-    @property
-    def primary_backend(self) -> Optional[str]:
-        """The run-scope backend for this request (D-008).
-
-        Majority wins; ties and empties fall back to first appearance. Deliberately
-        NOT literally "the first attempt": under concurrency that is a race, and a
-        request that fails over to another backend should not be labelled by the
-        one that failed.
-        """
-        if not self._backend_counts:
-            return None
-        return max(self._backend_first,
-                   key=lambda b: (self._backend_counts[b], -self._backend_first.index(b)))
 
     def attempt_end(self, attempt: Any) -> None:
         self._log.emit(
@@ -195,16 +182,26 @@ class RequestScope:
             )
         self._terminal_emitted = True
         value = getattr(terminal, "value", terminal)
-        fields.setdefault("primary_backend", self.primary_backend)
         self._log.emit("terminal", req_id=self.req_id, terminal=value, **fields)
+
+
+BACKENDS: Final[frozenset[str]] = frozenset({"groq", "standin", "mixed"})
 
 
 class EventLog:
     _SENTINEL: Final[object] = object()
 
     def __init__(self, run_dir: str, run_id: str, backend: str):
+        if backend not in BACKENDS:
+            raise ValueError(
+                f"backend must be one of {sorted(BACKENDS)}, got {backend!r}. "
+                f"It is a DECLARATION about the run, not a computed label."
+            )
         self.run_id = run_id
         self.backend = backend
+        self._attempt_backend_counts: dict[str, int] = {}
+        self._counts_lock = threading.Lock()
+        self._run_ended = False
         Path(run_dir).mkdir(parents=True, exist_ok=True)
         self.path = Path(run_dir) / "events.jsonl"
         self._f = open(self.path, "a", buffering=1, encoding="utf-8")
@@ -221,11 +218,16 @@ class EventLog:
 
     #: Envelope keys owned by the log. `req_id` is NOT here: it is a legitimate
     #: caller field (RequestScope supplies it, and direct emit() callers pass it).
+    #:
+    #: `backend` is absent ON PURPOSE: it is run scope on run-level events and
+    #: attempt scope on attempt events, which both go through this one function.
+    #: The prohibition therefore lives on the run-level emitters (`emit` for
+    #: run.*, and RequestScope for request.*), not on the shared channel.
     RESERVED_FIELDS: Final[frozenset[str]] = frozenset(
-        {"type", "t_mono", "t_wall", "run_id", "backend"}
+        {"type", "t_mono", "t_wall", "run_id"}
     )
-    # `t_first_byte`, `t_sent`, `req_id` etc. are ordinary fields and must NOT be
-    # reserved -- attempt.end legitimately carries them.
+    # `t_first_byte`, `t_sent`, `req_id`, `backend` are ordinary fields and must
+    # NOT be rejected here -- attempt.end legitimately carries the first three.
 
     def emit(self, type_: str, **fields: Any) -> None:
         if self._closed:
@@ -244,6 +246,28 @@ class EventLog:
             "backend": self.backend,
             **fields,
         })
+
+    def note_attempt_backend(self, backend: Optional[str]) -> None:
+        """Tally the OBSERVED backend of an attempt. Never feeds the declaration."""
+        if not backend:
+            return
+        with self._counts_lock:
+            self._attempt_backend_counts[backend] = (
+                self._attempt_backend_counts.get(backend, 0) + 1)
+
+    def end_run(self, **fields: Any) -> None:
+        """Emit `run.end` with the observed breakdown. Call once, on clean shutdown.
+
+        Deliberately NOT called from close(): the absence of `run.end` is how the
+        checker tells a clean shutdown from a crash. Use try/finally in entry
+        points so an exception still records that the run ended abnormally.
+        """
+        if self._run_ended:
+            raise RuntimeError("end_run() called twice")
+        self._run_ended = True
+        with self._counts_lock:
+            counts = dict(self._attempt_backend_counts)
+        self.emit("run.end", attempt_backend_counts=counts, **fields)
 
     def request(self, req_id: str) -> RequestScope:
         """Get-or-create the scope for a request."""
