@@ -56,6 +56,79 @@ class _StreamHTTPError(Exception):
         self.text = text
 
 
+class BudgetBook:
+    """One `Budget` PER MODEL. The provider's buckets are per model id.
+
+    Whether Groq's per-model buckets are truly independent is **UNVERIFIED**
+    (`models.buckets_separate_per_model` is null until the P1 probe's `buckets` mode
+    exhausts one model and watches the other's headers). It is a CONFIG ASSUMPTION:
+
+      * `buckets_separate_per_model: true`  -> one bucket per model (default here)
+      * `...: false`                        -> one shared bucket for every model
+      * `...: null` (unmeasured)            -> one bucket per model, because sharing
+                                               a bucket across models is the
+                                               behaviour that *loses* capacity
+                                               silently: a caller told "no budget
+                                               left for the small model" when the
+                                               small model is fine is wrong in the
+                                               expensive direction.
+
+    Defaulting to `true` while labelled is deliberate; the numbers are still no more
+    verified than the day/week reading in Q-04.
+    """
+
+    def __init__(self, tpm: int, rpd: int, separate: bool = True,
+                 default_model: str = ""):
+        self.default_tpm, self.default_rpd = tpm, rpd
+        self.separate = separate
+        self._by_model: dict[str, Budget] = {}
+        self._shared = Budget(tpm=tpm, rpd=rpd)
+        #: Which model a bare `gateway.budget.<attr>` refers to before any call.
+        #: Passed in from config: a model id literal here would violate rule 4, and
+        #: the lint test in this repo enforces that.
+        self._default_model = default_model
+        self._last_model: Optional[str] = None
+
+    def for_model(self, model: str) -> "Budget":
+        self._last_model = model
+        if not self.separate:
+            return self._shared
+        b = self._by_model.get(model)
+        if b is None:
+            b = Budget(tpm=self.default_tpm, rpd=self.default_rpd)
+            self._by_model[model] = b
+        return b
+
+    #: Convenience so existing call sites read the same.
+    def __getitem__(self, model: str) -> "Budget":
+        return self.for_model(model)
+
+    #: Back-compat for call sites that predate per-model buckets (`gw.budget.tpm_used`
+    #: in tests and scripts). They address the SMALL model's bucket explicitly rather
+    #: than silently picking a shared one, so the meaning of an old assertion does not
+    #: change: `models.small.id` is what those callers were always exercising.
+    @property
+    def default(self) -> "Budget":
+        """The bucket a bare `gw.budget.<attr>` means.
+
+        Before per-model buckets there was exactly one, so a legacy attribute read
+        could only mean "the bucket this gateway is using". That is preserved by
+        resolving to the most recently used model, not to a hard-coded id: a caller
+        that exercised model "m" must not be shown the small model's counters.
+        """
+        if not self.separate:
+            return self._shared
+        if self._last_model is not None:
+            return self.for_model(self._last_model)
+        return self.for_model(self._default_model)
+
+    def __getattr__(self, item):
+        # Only reached when normal lookup fails, so real attributes always win.
+        if item.startswith("_"):
+            raise AttributeError(item)
+        return getattr(self.default, item)
+
+
 @dataclass
 class Budget:
     """Local view of the provider's buckets.
@@ -184,7 +257,7 @@ class Gateway:
     log: EventLog
     base_url: str
     api_key: str
-    budget: Budget
+    budget: BudgetBook
     breaker: Breaker
     client: httpx.AsyncClient
     policy: str = "managed"
@@ -215,7 +288,12 @@ class Gateway:
         b = cfg.get("gateway.breaker", {})
         return cls(
             cfg=cfg, clock=clock, log=log, base_url=base_url, api_key=api_key,
-            budget=Budget(tpm=cfg.get("models.small.tpm"), rpd=cfg.get("models.small.rpd")),
+            budget=BudgetBook(
+                tpm=cfg.get("models.small.tpm"),
+                rpd=cfg.get("models.small.rpd"),
+                # None (unmeasured) is treated as separate; see BudgetBook.
+                separate=cfg.get("models.buckets_separate_per_model", None) is not False,
+                default_model=cfg.get("models.small.id")),
             breaker=Breaker(b.get("fail_threshold", 5), b.get("open_s", 10.0)),
             client=client, policy=policy,
             retry_budget_ratio=cfg.get("gateway.retry_budget_ratio", 0.1),
@@ -327,7 +405,7 @@ class Gateway:
                     raise BreakerOpen(
                         f"breaker open, reopens in "
                         f"{self.breaker.opened_at + self.breaker.open_s - t_attempt:.1f}s")
-                self.budget.take(max_tokens, t_attempt)
+                self.budget[model].take(max_tokens, t_attempt)
 
             attempt = Attempt(
                 attempt_id, scope.req_id, step,
@@ -424,9 +502,14 @@ class Gateway:
                 attempt.rl_headers_raw = st.headers or {}
                 rl = parse_rl_headers(st.headers or {})
                 attempt.retry_after_s = rl["retry_after_s"]
-                self.budget.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
-                self.budget.settle(max_tokens, self.clock.now())
-                self.budget.reconcile(rl.get("remaining_tpm"),
+                # Each model reconciles from ITS OWN response headers. Reconciling a
+                # per-model bucket from another model's headers would let the larger
+                # model's exhaustion throttle the smaller one -- the whole reason for
+                # separate buckets.
+                _b = self.budget[model]
+                _b.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
+                _b.settle(max_tokens, self.clock.now())
+                _b.reconcile(rl.get("remaining_tpm"),
                                       rl.get("remaining_rpd"), self.clock.now())
                 attempt.outcome = Outcome.OK
                 scope.attempt_end(attempt)
@@ -492,11 +575,12 @@ class Gateway:
             usage = body.get("usage") or {}
             attempt.tokens_in = usage.get("prompt_tokens")
             attempt.tokens_out = usage.get("completion_tokens")
-            self.budget.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
+            _budget = self.budget[model]
+            _budget.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
             # A response has arrived, so this attempt's reservation is no longer in
             # flight and the header is allowed to speak for it.
-            self.budget.settle(max_tokens, self.clock.now())
-            self.budget.reconcile(rl.get("remaining_tpm"), rl.get("remaining_rpd"),
+            _budget.settle(max_tokens, self.clock.now())
+            _budget.reconcile(rl.get("remaining_tpm"), rl.get("remaining_rpd"),
                                   self.clock.now())
 
             if resp.status_code == 200:

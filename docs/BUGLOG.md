@@ -786,3 +786,36 @@ and that is not a failure this project could detect after the fact.
 **Sandbox.** `STANDIN_HANG_S=30`, cap 0.5 s: 2 attempts, each with its own
 `attempt.end`, both `attempt_timed_out=True`, one `retry.sleep`, then a clean
 surface. Filed UNCALIBRATED — 0.5 s exercises the mechanism, it is not a recommendation.
+
+## BUG-036 · L4 gateway · one shared budget for every model
+**Cause.** `Gateway` held a single `Budget` built from `models.small.tpm/rpd`. Every
+model id drew from it. `models.buckets_separate_per_model` existed in
+`config/relay.yaml` and was read by nothing — the same pattern as BUG-035.
+
+**Why one shared bucket is the wrong default.** It fails in the *expensive*
+direction: exhausting the large model refuses calls to the small one, so the caller is
+told there is no budget when there is. A shared bucket cannot "lose" capacity by being
+too generous; it loses it by refusing requests that would have succeeded.
+
+**Fix.** `BudgetBook` holds one `Budget` per model id, and each reconciles from its own
+response headers. `buckets_separate_per_model` is honoured for `true`/`false`.
+**`null` resolves to separate**, and the reasoning is stated in the class: when the
+answer is unmeasured, prefer the assumption that fails loudly rather than the one that
+silently refuses capacity.
+
+**UNVERIFIED, and labelled as such.** Whether Groq's per-model buckets are genuinely
+independent has never been observed — `buckets_separate_per_model` stays `null` until
+the probe's `buckets` mode exhausts one model and watches the other's headers. The
+class docstring says UNVERIFIED and names the key, and a test asserts both survive.
+
+**Back-compat.** Legacy `gw.budget.tpm_used` reads resolve to the most recently used
+model's bucket, because before this change there was exactly one bucket and that is
+what such a read meant. `__getattr__` only fires when normal lookup fails, so real
+attributes always win.
+
+**Caught by the existing lint.** My first version hard-coded a model id as the default
+bucket key; `test_no_hardcoded_model_or_url_in_package` failed and the id now comes
+from `models.small.id`.
+
+**Mutation check.** Forcing `for_model()` to always return the shared bucket fails 2 of
+6 tests.
