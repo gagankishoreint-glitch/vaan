@@ -724,3 +724,33 @@ the change cannot be quietly reverted by someone who assumes a bucket is a windo
 `runs/standin/refill_bucket.json` (UNCALIBRATED) shows the stand-in's residual
 `7896` vs `7844` is fully explained by `len(json)//4 = 24` versus a real 76-token
 prompt — the documented tokenizer difference, not a bucket error.
+
+## BUG-034 · L4 streaming · `StreamProtocolError` had no handler, so the evidence died at the raise
+**Cause.** 5c introduced `StreamProtocolError` and the tolerant parser, but *nothing in
+the gateway caught it*. Two consequences: the exception escaped `Gateway.call()` as an
+unhandled error instead of a terminal reply, and — worse — no `attempt.end` was written
+for the failing attempt, so the offending bytes the parser had carefully retained were
+discarded at the moment they became useful.
+
+**Fix.** The gateway now handles it alongside the HTTP-error path: outcome
+`SERVER_ERROR` (retryable, and deliberately **not** `TIMEOUT` — a wrong-looking stream
+and a slow model want different responses), breaker records a failure, `_next_delay`
+applies so the deadline still binds, and the error propagates only when no retry is
+available. `StreamProtocolError` carries its partial `StreamTimings`, because
+`consume()` raises before control returns and the attempt would otherwise never see
+them.
+
+**No new `Outcome` member.** `Outcome` lives in `contracts.py`; `SERVER_ERROR` is the
+right severity and `protocol_error` keeps it distinguishable in the log.
+
+**Also.** `usage_from()` now checks `x_groq.usage` as well as top-level `usage`
+(UNVERIFIED location, from memory). A wrong lookup makes `tokens_in/out` null and the
+TPM reconciliation a silent no-op, so both are accepted, top-level first.
+
+**Groq-shaped stream.** A test pins the real shape — role chunk first, **reasoning
+deltas before content**, no usage chunk, then `[DONE]` — as a valid, complete stream
+with `n_malformed == 0`. Reasoning deltas must not become `model_ttft`: the first
+*content* token is the honest one, or TTFT is measured against the start of the
+thinking block and flatters the system.
+
+**Mutation check.** Removing the handler fails 2 of 3 tests.

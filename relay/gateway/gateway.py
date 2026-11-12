@@ -35,7 +35,7 @@ from relay.clock import Clock
 from relay.config import Config
 from relay.contracts import Attempt, Outcome
 from relay.events import EventLog, RequestScope
-from relay.gateway.stream import consume
+from relay.gateway.stream import StreamProtocolError, consume
 from relay.ratelimit_headers import parse_rl_headers
 
 
@@ -315,6 +315,40 @@ class Gateway:
                     if managed:
                         self.breaker.record(False, attempt.t_end)
                     raise DeadlineExceeded("no content before the deadline") from None
+                except StreamProtocolError as e:
+                    # A PROTOCOL fault, not a timeout: the provider (or a proxy)
+                    # sent something unintelligible. Treated as a retryable server
+                    # error -- bytes were never received, so retrying is honest --
+                    # but `protocol_error` on the attempt keeps it distinguishable
+                    # from a 5xx in the log, and the breaker counts it as a failure.
+                    # No new Outcome member: Outcome lives in contracts.py, and the
+                    # existing SERVER_ERROR is the correct severity here.
+                    attempt.outcome = Outcome.SERVER_ERROR
+                    attempt.protocol_error = str(e)[:500]
+                    attempt.t_end = self.clock.now()
+                    # The exception carries the partial timings, because consume()
+                    # raises before control returns and the evidence would otherwise
+                    # never reach the attempt.
+                    _st = getattr(e, "timings", None)
+                    if _st is not None:
+                        attempt.sse_raw = [r.raw for r in _st.raw_lines]
+                        attempt.n_sse_lines = _st.n_raw_lines
+                        attempt.n_sse_malformed = _st.n_malformed
+                        attempt.sse_saw_done = _st.saw_done
+                    scope.attempt_end(attempt)
+                    if managed:
+                        self.breaker.record(False, attempt.t_end)
+                    last_error = f"stream_protocol_error {attempt.protocol_error}"
+                    decision = self._next_delay(attempt, t_start, deadline_s,
+                                                attempt_no, max_attempts, managed)
+                    if decision is None:
+                        raise StreamProtocolError(attempt.protocol_error) from None
+                    wait, why = decision
+                    scope.emit("retry.sleep", attempt_id=attempt.attempt_id,
+                               sleep_s=round(wait, 3), policy=self.policy, why=why)
+                    if wait:
+                        await self.clock.sleep(wait)   # slot released while sleeping
+                    continue
                 except asyncio.CancelledError:
                     attempt.outcome = Outcome.CANCELLED
                     attempt.t_end = self.clock.now()

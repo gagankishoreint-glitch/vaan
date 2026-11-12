@@ -76,7 +76,16 @@ class StreamProtocolError(Exception):
     Distinct from TimeoutError on purpose: a timeout means the provider was slow, this
     means the provider (or a proxy) sent something unintelligible. They want different
     responses -- one retries, the other should be investigated.
+
+    Carries the partial `StreamTimings` (when there is one) so the caller can attach
+    the wire evidence to the attempt. Without it the exception was the ONLY record of
+    the failure and the offending bytes were lost at the raise -- which defeats the
+    reason the parser keeps them at all.
     """
+
+    def __init__(self, message: str, timings=None):
+        super().__init__(message)
+        self.timings = timings
 
 
 #: Line shapes an SSE stream can legally contain that are NOT data frames. They are
@@ -175,8 +184,24 @@ def delta_text(frame: dict) -> str:
 
 
 def usage_from(frame: dict) -> Optional[dict]:
+    """Usage from a frame, wherever the provider put it.
+
+    Groq is believed to emit the final usage either as a top-level `usage` object or
+    nested under `x_groq` (`{"x_groq": {"usage": {...}}}`). UNVERIFIED: the four
+    transcribed observations were non-streamed and carried no streamed frames, so
+    the `x_groq` location is from memory, not from a captured response. Both are
+    accepted, top-level first, because a wrong lookup means `tokens_in/out` are null
+    and the TPM reconciliation silently does nothing.
+    """
     u = frame.get("usage")
-    return u if isinstance(u, dict) else None
+    if isinstance(u, dict) and u:
+        return u
+    xg = frame.get("x_groq")
+    if isinstance(xg, dict):
+        u2 = xg.get("usage")
+        if isinstance(u2, dict) and u2:
+            return u2
+    return None
 
 
 #: How many verbatim lines to retain per attempt. Enough to diagnose a failure,
@@ -232,7 +257,8 @@ async def consume(lines: AsyncIterator[str], clock, t_sent: float,
                 # A stream that opens with garbage is a provider/proxy fault, not a
                 # slow model. Surface it now rather than waiting for the deadline.
                 raise StreamProtocolError(
-                    f"stream opened with a non-SSE line: {got.error}")
+                    f"stream opened with a non-SSE line: {got.error}",
+                    timings=st)
             continue
         if st.first_delta is None:
             st.first_delta = now
@@ -253,6 +279,6 @@ async def consume(lines: AsyncIterator[str], clock, t_sent: float,
         if st.n_malformed and st.n_malformed == st.n_raw_lines:
             raise StreamProtocolError(
                 f"stream contained only malformed lines ({st.n_malformed}); "
-                f"first: {st.first_malformed_error}")
+                f"first: {st.first_malformed_error}", timings=st)
         raise TimeoutError("stream ended with no content")
     return st
