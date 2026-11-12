@@ -754,3 +754,35 @@ with `n_malformed == 0`. Reasoning deltas must not become `model_ttft`: the firs
 thinking block and flatters the system.
 
 **Mutation check.** Removing the handler fails 2 of 3 tests.
+
+## BUG-035 · L4 gateway · `attempt_timeout_s` was read by nobody, and could not have worked
+**Cause, part 1.** `gateway.attempt_timeout_s` was declared in `config/relay.yaml` with
+a comment saying the P1 probe would set it. **No code read it.** A configuration key
+that nothing consumes is worse than a missing feature: it reads as implemented.
+
+**Cause, part 2 — the reason reading it would not have been enough.** The buffered
+attempt's `TimeoutError` handler ended with `raise DeadlineExceeded(...)`
+*unconditionally*. So even once the value was plumbed through, the **first** slow
+attempt would have terminated the request: a per-attempt timeout would have behaved
+exactly like an outer deadline. The feature is not "add a timeout", it is "make one
+kind of expiry retryable and the other terminal", and only the second half changes
+behaviour.
+
+**Fix.** `_attempt_budget()` returns `min(remaining deadline, attempt_timeout_s)` and
+says which limit produced it. Taking the minimum is what makes it impossible for a
+per-attempt cap to *extend* the outer deadline. On expiry, `timeout_limit` decides:
+`attempt_timeout` → run `_next_delay` and retry; `deadline` → raise as before. Each
+expiry writes its own `attempt.end` with `attempt_timed_out` and `timeout_limit`, so a
+retry storm cannot masquerade as normal traffic.
+
+**Preserved.** The pre-existing `max(1.0, …)` floor: a nearly-spent deadline still gets
+one real attempt rather than an instant timeout. I removed it by accident mid-change,
+caught it by diffing against the old line, and put it back.
+
+**Config.** `attempt_timeout_s` stays **null** — no per-attempt cap until the probe
+measures the fast path's p99. An invented value would silently cut healthy requests,
+and that is not a failure this project could detect after the fact.
+
+**Sandbox.** `STANDIN_HANG_S=30`, cap 0.5 s: 2 attempts, each with its own
+`attempt.end`, both `attempt_timed_out=True`, one `retry.sleep`, then a clean
+surface. Filed UNCALIBRATED — 0.5 s exercises the mechanism, it is not a recommendation.

@@ -83,6 +83,12 @@ class Attempt:
     #: A protocol fault, distinct from a timeout. Retryable, but logged as its own
     #: outcome so the two never get averaged together.
     protocol_error: Optional[str] = None
+    #: True when THIS attempt was cut by `gateway.attempt_timeout_s` rather than by
+    #: the outer request deadline. A per-attempt expiry is retryable; the outer
+    #: deadline ends the request. Without the flag the two are indistinguishable in
+    #: the log and a retry storm looks like normal traffic.
+    attempt_timed_out: Optional[bool] = None
+    timeout_limit: Optional[str] = None    # "attempt_timeout" | "deadline"
     error_body: Optional[str] = None
 
     def finished(self) -> bool:

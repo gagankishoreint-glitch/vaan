@@ -143,6 +143,8 @@ class RequestScope:
             n_sse_malformed=getattr(attempt, "n_sse_malformed", None),
             sse_saw_done=getattr(attempt, "sse_saw_done", None),
             protocol_error=getattr(attempt, "protocol_error", None),
+            attempt_timed_out=getattr(attempt, "attempt_timed_out", None),
+            timeout_limit=getattr(attempt, "timeout_limit", None),
         )
 
     def abandon(self, reason: str = "user") -> None:

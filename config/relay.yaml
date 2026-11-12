@@ -57,7 +57,12 @@ gateway:
   # Credit granted at start-up so a cold gateway can retry its first failures.
   # 1.0 = allow one retry before any traffic has accrued.
   retry_credit_floor: 1.0
-  attempt_timeout_s: null             # set by P1 probe: p99 of stand-in fast path, plus margin
+  # PER-ATTEMPT cap, distinct from request_deadline_s (the whole request) and from
+  # the retry policy. One attempt that exceeds this is abandoned and RETRIED; the
+  # outer deadline still bounds the total. UNMEASURED: needs p99 of the real fast
+  # path from the P1 probe. null = no per-attempt cap (the outer deadline only),
+  # because inventing a number here would silently cut healthy requests.
+  attempt_timeout_s: null             # set by P1 probe: p99 of fast path, plus margin
   queue_max: null                     # set by P1: depth at which admission starts queueing/shedding
   breaker: {fail_threshold: 5, open_s: 10}
   retry_jitter_frac: 0.0              # set by P9: raised if the harness shows retry synchronisation

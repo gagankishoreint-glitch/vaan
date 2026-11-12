@@ -194,6 +194,11 @@ class Gateway:
     _last_attempt: Optional[Attempt] = None
     #: Hard cap on HTTP attempts per logical call, for the MANAGED policy.
     max_attempts: int = 3
+    #: Per-ATTEMPT timeout, distinct from `deadline_s` (the whole request).
+    #: None = no per-attempt cap. A timed-out attempt is RETRYABLE and gets its own
+    #: `attempt.end` with outcome TIMEOUT, so a single slow attempt does not look
+    #: like a slow request. Never allowed to extend the outer deadline.
+    attempt_timeout_s: Optional[float] = None
     max_tokens_map: dict = field(default_factory=dict)
     _retries_used: int = 0
     _calls: int = 0
@@ -215,6 +220,7 @@ class Gateway:
             client=client, policy=policy,
             retry_budget_ratio=cfg.get("gateway.retry_budget_ratio", 0.1),
             max_attempts=cfg.get("gateway.max_attempts", 3),
+            attempt_timeout_s=cfg.get("gateway.attempt_timeout_s", None),
         )
 
     # ------------------------------------------------------------ payload
@@ -258,6 +264,37 @@ class Gateway:
         return body
 
     # ------------------------------------------------------------ the loop
+
+    def _attempt_budget(self, deadline_s: float, t_start: float) -> tuple[float, str]:
+        """Seconds this ATTEMPT may take, and which limit produced it.
+
+        Two independent limits:
+          * the outer request deadline, minus what has already elapsed;
+          * `gateway.attempt_timeout_s`, a per-attempt cap.
+
+        The attempt gets the SMALLER. Taking the minimum is what makes it impossible
+        for a per-attempt timeout to extend the outer deadline -- the failure mode
+        that makes naive "add a timeout" changes dangerous.
+
+        A per-attempt expiry is RETRYABLE: the attempt is recorded with its own
+        `attempt.end` (outcome TIMEOUT, `attempt_timed_out` true) and the retry
+        policy decides what happens next. That is the difference from the outer
+        deadline, which ends the request.
+
+        `attempt_timeout_s` is null (no cap) until the probe measures it, so a
+        project that has not measured its fast path does not silently start cutting
+        healthy requests.
+        """
+        # The floor is deliberate and predates this change: a request whose deadline
+        # is nearly spent still gets ONE real attempt rather than an instant
+        # timeout, so "too late to try" stays distinguishable from "tried and was
+        # slow". Preserved exactly.
+        outer = max(1.0, deadline_s - (self.clock.now() - t_start))
+        if self.attempt_timeout_s is None:
+            return outer, "deadline"
+        if self.attempt_timeout_s <= outer:
+            return self.attempt_timeout_s, "attempt_timeout"
+        return outer, "deadline"
 
     async def call(self, *, scope: RequestScope, step: str, model: str,
                    messages: list[dict], max_tokens: int,
@@ -305,11 +342,16 @@ class Gateway:
             if stream:
                 # A streamed attempt times out on FIRST CONTENT, not on the whole
                 # body: a request that has started answering is not late.
+                s_budget, s_limited_by = self._attempt_budget(deadline_s, t_start)
                 try:
-                    st = await self._streamed_call(payload, t_attempt, deadline_s,
-                                                   t_start)
+                    st = await self._streamed_call(
+                        payload, t_attempt, deadline_s, t_start,
+                        attempt_timeout_s=(s_budget if s_limited_by ==
+                                           "attempt_timeout" else None))
                 except asyncio.TimeoutError:
                     attempt.outcome = Outcome.TIMEOUT
+                    attempt.attempt_timed_out = (s_limited_by == "attempt_timeout")
+                    attempt.timeout_limit = s_limited_by
                     attempt.t_end = self.clock.now()
                     scope.attempt_end(attempt)
                     if managed:
@@ -392,17 +434,42 @@ class Gateway:
                     self.breaker.record(True, attempt.t_end)
                 return body
 
+            budget, limited_by = self._attempt_budget(deadline_s, t_start)
             try:
                 resp = await asyncio.wait_for(
                     self.client.post("/chat/completions", json=payload),
-                    timeout=max(1.0, deadline_s - (self.clock.now() - t_start)))
+                    timeout=budget)
             except asyncio.TimeoutError:
                 attempt.outcome = Outcome.TIMEOUT
+                # Which limit fired decides whether this is retryable. A per-attempt
+                # expiry leaves deadline budget on the clock, so `_next_delay` will
+                # normally retry it; the outer deadline does not.
+                attempt.attempt_timed_out = (limited_by == "attempt_timeout")
+                attempt.timeout_limit = limited_by
                 attempt.t_end = self.clock.now()
                 scope.attempt_end(attempt)
-                if managed:
-                    self.breaker.record(False, attempt.t_end)
-                raise DeadlineExceeded("attempt timed out") from None
+                # A per-attempt expiry is RETRYABLE -- that is the whole difference
+                # from the outer deadline. The old code raised DeadlineExceeded
+                # unconditionally, so `attempt_timeout_s` could never have worked
+                # even once it was read: the first slow attempt would have ended the
+                # request. Only the OUTER deadline ends the request here.
+                if limited_by == "attempt_timeout":
+                    last_error = "attempt timed out (per-attempt cap)"
+                    # Retry decision, identical in shape to the HTTP-error path.
+                    decision = self._next_delay(attempt, t_start, deadline_s,
+                                                attempt_no, max_attempts, managed)
+                    if decision is None:
+                        raise DeadlineExceeded(last_error) from None
+                    wait, why = decision
+                    scope.emit("retry.sleep", attempt_id=attempt.attempt_id,
+                               sleep_s=round(wait, 3), policy=self.policy, why=why)
+                    if wait:
+                        await self.clock.sleep(wait)
+                    continue
+                else:
+                    if managed:
+                        self.breaker.record(False, attempt.t_end)
+                    raise DeadlineExceeded("attempt timed out") from None
             except asyncio.CancelledError:
                 # H4: the caller abandoned this request. Cancelling the await above
                 # cancels the HTTP request itself, so the provider stops generating
@@ -468,7 +535,8 @@ class Gateway:
         raise DeadlineExceeded(f"{last_error} (gave up after {max_attempts} attempts)")
 
     async def _streamed_call(self, payload: dict, t_attempt: float,
-                             deadline_s: float, t_start: float):
+                             deadline_s: float, t_start: float,
+                             attempt_timeout_s: Optional[float] = None):
         """Open the SSE stream and stamp the three timings as frames arrive.
 
         Times out on FIRST CONTENT, not on the whole body: a request that has begun
@@ -489,8 +557,14 @@ class Gateway:
                 async for line in resp.aiter_lines():
                     yield line
 
+        # The FIRST-CONTENT deadline is the outer one, tightened by the per-attempt
+        # cap when there is one. consume() checks it per frame, so a stream that is
+        # open but silent past the cap is abandoned rather than waiting forever.
+        content_deadline = t_start + deadline_s
+        if attempt_timeout_s is not None:
+            content_deadline = min(content_deadline, t_attempt + attempt_timeout_s)
         return await consume(lines(), self.clock, t_attempt,
-                             deadline_at=t_start + deadline_s,
+                             deadline_at=content_deadline,
                              headers=captured)
 
     def _next_delay(self, attempt, t_start: float, deadline_s: float,
