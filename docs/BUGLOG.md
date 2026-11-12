@@ -461,3 +461,42 @@ after 25 answers whose provider-reported window was still full. Restored: `4 pas
 `RuntimeError: There is no current event loop` — `asyncio.get_event_loop()` is
 deprecated and does not survive another test closing the loop. `asyncio.run` fixes it.
 **Lesson.** A test that only passes when run alone is not passing.
+
+## BUG-026 · L6 observability · `flush()` waited for the dequeue, not the write
+**Symptom.** `tests/test_events.py::test_backend_is_not_reserved_at_the_shared_channel`
+failed **only inside the full suite**, on the supervisor's machine (Python 3.14.8:
+278 passed, 1 failed, 1 skipped). `read_events(lg.path)` came back empty immediately
+after `lg.flush()`. It passed alone (5×) and across the whole file (26 tests).
+
+**Cause — the hypothesis, confirmed.** `flush()` polled `while not self._q.empty()`.
+That asks whether the queue has work *waiting*, not whether work has been *done*. The
+writer thread can already have dequeued an item and still be serialising it, so the
+queue reads empty with an event in flight; the poll exits, the file is short by one
+line, and the event lands a moment later. Under a full suite the process is busy
+enough for the scheduler to preempt the writer inside that window.
+
+**Proof, three ways.**
+1. *Noise first: not reproducible by load.* 2 000 quiet iterations and 500 iterations
+   with 4 CPU-burning threads and a 200-event-deep queue lost **0** events. The window
+   is microseconds, so luck is the wrong instrument.
+2. *Mechanism, deterministically.* Widening only the writer's `get()` → `write()` gap
+   (a 50 ms `json.dumps`) made the old `flush()` return in **1.1 ms with 0 events
+   readable**, and the event then appeared. If `flush()` waited for the write, widening
+   that gap could not change anything. It changed everything.
+3. *Mutation check.* New regression test
+   `tests/test_flush_race.py::test_flush_waits_for_the_write_not_the_dequeue` widens the
+   same gap and asserts the line is readable after `flush()`. Against the restored old
+   poll it fails `assert 0 == 1`; against the fix it passes.
+
+**Fix.** `queue.SimpleQueue` → `queue.Queue` (unbounded, so `put()` stays non-blocking
+and `emit()` remains an enqueue — `test_emit_does_not_block_caller` still holds at 2000
+emits < 1 s). The writer now calls `task_done()` after each write, in a `finally` so the
+sentinel is covered too, and `flush()` calls `join()` before flushing the handle.
+`close()`-then-`flush()` was re-checked twice for hangs: no hang.
+
+**Why it mattered.** A short read is indistinguishable from a missing event, and every
+report number comes from this file. This is the same failure class as BUG-001/002:
+correct-looking cleanup code and an API that made the wrong thing natural.
+
+**Not fixed here.** `commit 8f0ff4b` (the supervisor's 351-row ledger) is not on origin;
+`docs/TOKEN_LEDGER.md` was left untouched by this change, by instruction.

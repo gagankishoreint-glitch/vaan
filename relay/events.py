@@ -208,7 +208,10 @@ class EventLog:
         Path(run_dir).mkdir(parents=True, exist_ok=True)
         self.path = Path(run_dir) / "events.jsonl"
         self._f = open(self.path, "a", buffering=1, encoding="utf-8")
-        self._q: queue.SimpleQueue = queue.SimpleQueue()
+        # queue.Queue, NOT SimpleQueue: flush() needs join()/task_done() to wait for
+        # work the writer has already dequeued but not yet written. An unbounded
+        # Queue keeps put() non-blocking, so emit() stays an enqueue (rule 8).
+        self._q: queue.Queue = queue.Queue()
         self._closed = False
         self._lock = threading.Lock()
         self._scopes: dict[str, RequestScope] = {}
@@ -284,21 +287,34 @@ class EventLog:
     def _writer(self) -> None:
         while True:
             item = self._q.get()
-            if item is self._SENTINEL:
-                break
-            self._f.write(json.dumps(item, default=str) + "\n")
+            try:
+                if item is self._SENTINEL:
+                    break
+                self._f.write(json.dumps(item, default=str) + "\n")
+                self._f.flush()      # the file is line-buffered; be explicit anyway
+            finally:
+                # Runs for EVERY get(), including the sentinel, so a join() issued
+                # after close() cannot hang on an unfinished task.
+                self._q.task_done()
 
     def flush(self) -> None:
-        """Wait until the writer thread has drained the queue.
+        """Wait until every queued event has actually been WRITTEN.
 
-        Safe to call after close(): close() already joins the writer, so there is
-        nothing left to do. Raising here (ValueError on a closed file) turned a
-        correct shutdown into a crash -- see docs/BUGLOG.md BUG-002.
+        The previous implementation polled `self._q.empty()`, which is not the same
+        question. The writer thread can have already dequeued an item and still be
+        serialising it, so the queue reads empty while an event is in flight; the
+        poll then exits, `read_events()` sees a short file, and the event appears a
+        moment later. Measured: rewinding the queue to that state made flush()
+        return in 1.1 ms with the event still invisible (BUG-026).
+
+        `join()` blocks until every put() has been matched by a task_done(), which
+        the writer calls after the write -- so it waits for the write, not for the
+        dequeue. Safe to call after close(): the writer calls task_done() for the
+        sentinel too, and close() joins the thread first.
         """
         if self._closed:
             return
-        while not self._q.empty():
-            time.sleep(0.001)
+        self._q.join()
         self._f.flush()
 
     def close(self) -> None:
