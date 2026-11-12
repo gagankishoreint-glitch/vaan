@@ -101,6 +101,11 @@ ladder:
   # PRD s6. L0 and L3 are structural; L1 and L2 need measured thresholds.
   l1_tpm_remaining_frac: 0.25         # trigger: TPM remaining below this fraction
   l1_queue_wait_s: 2.0                # trigger: admission queue wait exceeds this
+  # L2 trigger: remaining TPM fraction below which a NEW generation is refused and
+  # the request is served from cache/coalescing only. Its own key, not a multiple of
+  # the L1 trigger -- a second invented multiple is the unmeasured-threshold mistake.
+  # UNMEASURED.
+  l2_tpm_remaining_frac: 0.02
   l2_dup_window_s: null               # set by P7: duplicate-arrival window measured from the event log
   l2_max_tokens_scale: null           # set by P7: answer-cap multiplier chosen at L2
 

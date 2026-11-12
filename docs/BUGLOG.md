@@ -901,3 +901,35 @@ can say so.
 `passages_only(queue_full)`, 5 terminals, **0 dropped without a terminal**, all 0
 tokens. UNCALIBRATED — `workers`, `queue_max` and `service_estimate_s` are all
 unmeasured.
+
+## BUG-039 · L6 pipeline · the ladder existed only as config keys
+**Missing.** `ladder:` had `l1_tpm_remaining_frac`, `l1_queue_wait_s`,
+`l2_max_tokens_scale` — and no code computed a level from any of them. L0/L3 existed
+implicitly (normal operation, and running out of budget); L1/L2 did not exist at all.
+
+**Built as one function.** `compute_level(BudgetState, LadderConfig) -> Level`. One
+place decides, so the level can be logged and tested; scattering "if we are short,
+reduce X" through the pipeline is how a system ends up degrading three different ways
+depending on which path ran.
+
+**A boundary bug I introduced and then made impossible.** My first `compute_level`
+used `< l1_trigger * 2` for L1 and put L2 at `< l1_trigger`. That silently moved
+**both** boundaries: the configured 0.25 would have degraded at 0.50, and the
+configured number would have meant something nobody had written down. L1 now triggers
+exactly at the configured fraction, L2 has its **own key**
+(`l2_tpm_remaining_frac`) rather than a second invented multiple, and two tests place
+the input just either side of each configured boundary so the doubling cannot return.
+
+**`None` is UNKNOWN, not "plenty" and not "empty".** An unobserved budget falls
+through to L0 with a reason that says so — but queue pressure is *observed*, so it can
+still degrade a request whose budget was never seen. Pretending an unseen number is
+healthy is how a system is confident right up to the moment it stops.
+
+**Provisional thresholds name themselves.** Every null key resolves to a value in
+`PROVISIONAL` and the list is emitted on the event (`ladder_provisional`), so the log
+can never claim a measured trigger it did not have. `l2_max_tokens_scale` is null in
+config, so it is the one that reports as provisional today.
+
+**Sandbox.** Boundary walk at 0.90 / 0.30 / 0.2499 / 0.10 / 0.019 / 0.0 plus queue-only
+cases, all matching the configured boundaries. UNCALIBRATED — the thresholds are
+exercised, not justified.
