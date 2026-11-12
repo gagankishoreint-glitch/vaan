@@ -860,3 +860,44 @@ test; caching every terminal fails the "only verified" test.
 **UNMEASURED.** `ttl_s: 900` is a placeholder with no basis: how long an answer stays
 valid depends on the corpus, which changes only when papers change. The stand-in run
 used no model at all, so it measures the mechanism and **not** any token saving.
+
+## BUG-038 · L5 admission · no queue at all, and "reject when full" is a trap
+**Missing.** `gateway.queue_max` was null and read by nothing. Every request went
+straight to a model call; nothing bounded concurrency and nothing could shed load
+before spending a token.
+
+**The trap.** The obvious implementation of "reject when full" is a bare rejection --
+return `None`, or an HTTP 429 with no body. That violates the project's terminal rule:
+a dropped request leaves **no terminal event**, and a post-mortem cannot distinguish
+it from a crash. It also gives the caller no way to tell "retry shortly" from "this
+will never work".
+
+**Chosen behaviour.** A shed request gets `PassagesOnly(queue_full)` — the passages
+that would have answered, at **zero tokens**, with the reason recorded. Two shed
+reasons are distinguished: `queue_full` (no room) and `would_wait_past_deadline`
+(the expected wait exceeds the caller's remaining patience). The second refuses
+**before** queueing, so a request never spends its remaining patience to reach a
+refusal it could have had immediately.
+
+**Expected wait, not depth.** A queue of depth 3 is harmless at 40 ms per request and
+fatal at 30 s. The check converts depth into expected wait using a moving average of
+observed service time, and compares that against the deadline.
+
+**Two bugs found by my own tests.**
+1. `release()` freed the slot and the waiter re-incremented it. Between those two
+   points another `acquire()` could see a free worker and take it — the queue
+   over-admitted. The slot is now **transferred** in `release()` and the waiter does
+   not increment.
+2. My first `expected_wait_s` returned 0 for interactive requests regardless of depth,
+   so a deep queue predicted no wait. Priority decides ordering among the queued; it
+   cannot erase work already occupying the workers.
+
+**`queue_max: null` does not become 0.** A capacity of 0 sheds every request as
+`queue_full` — a production outage wearing the costume of a safety default. Null
+resolves to a named provisional 32 and `capacity_was_provisional` is True so the log
+can say so.
+
+**Sandbox.** Forced to capacity 2 / 1 worker: 5 further requests → 5 shed as
+`passages_only(queue_full)`, 5 terminals, **0 dropped without a terminal**, all 0
+tokens. UNCALIBRATED — `workers`, `queue_max` and `service_estimate_s` are all
+unmeasured.

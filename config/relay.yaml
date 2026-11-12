@@ -77,7 +77,16 @@ gateway:
   # path from the P1 probe. null = no per-attempt cap (the outer deadline only),
   # because inventing a number here would silently cut healthy requests.
   attempt_timeout_s: null             # set by P1 probe: p99 of fast path, plus margin
-  queue_max: null                     # set by P1: depth at which admission starts queueing/shedding
+  # Admission queue (item D). `queue_max` is the number of requests allowed to WAIT;
+  # beyond that a request is shed with PassagesOnly(queue_full) -- at 0 tokens, never
+  # a bare rejection. workers drain the queue. UNMEASURED: both need the P1 probe's
+  # observed concurrency before they mean anything.
+  queue_max: null                     # set by P1: depth at which admission sheds
+  workers: 4                          # provisional; UNMEASURED
+  # Starting estimate for how long one request occupies a worker. Turns queue DEPTH
+  # into an EXPECTED WAIT, which is what the deadline check compares against. A queue
+  # of 3 is harmless at 40 ms each and fatal at 30 s each. UNMEASURED.
+  service_estimate_s: 1.0             # UNMEASURED
   breaker: {fail_threshold: 5, open_s: 10}
   retry_jitter_frac: 0.0              # set by P9: raised if the harness shows retry synchronisation
   # A 429 is treated as a DAY limit if retry-after is at least this. Deliberately
