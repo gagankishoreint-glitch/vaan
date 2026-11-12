@@ -606,3 +606,35 @@ catches the historical `12.5%` if reintroduced.
 **Why it survived.** Two artifacts disagreed and both were arithmetically correct, so
 neither looked wrong in isolation. The discrepancy was only visible from a third
 place that recomputed from the rows — which is what `make_tables.py` is for.
+
+## BUG-030 · L4 streaming · the SSE parser destroyed the evidence
+**Cause.** `parse_sse_line` returned `None` for every line it did not recognise —
+malformed JSON, an HTML error page injected by a proxy, a truncated frame, a bare
+non-SSE line. The caller could not distinguish "not parseable" from "nothing yet", so
+a corrupted stream and a slow model produced the **same** `TimeoutError`. The bytes on
+the wire were discarded at the first line and were unrecoverable afterwards.
+
+**Why it matters here specifically.** This project's rule is that a number must be
+traceable to a line in a file. A failure whose only record is "no content arrived"
+violates that: the post-mortem cannot answer what the provider sent.
+
+**Fix.** `parse_sse_line_verbose` classifies **every** line and never raises:
+`frame | done | blank | comment | event | malformed`, keeping `raw` verbatim and the
+decode error. `consume()` records lines into a **bounded** buffer (cap 40, plus a
+liveness marker), counts them, and raises `StreamProtocolError` — distinct from
+`TimeoutError` — when a stream opens with garbage or consists only of it. Legal but
+non-data lines (`:` comments, `event:`/`id:`/`retry:` fields) are recognised, so
+tolerance means *understanding more*, not *ignoring more*.
+
+**Reaches the log.** `attempt.end` now carries `sse_raw`, `n_sse_lines`,
+`n_sse_malformed`, `sse_saw_done` and `protocol_error`. Pinning this in a unit test
+alone would not have helped: the post-mortem reads the JSONL, so the evidence had to
+travel there. `tests/test_sse_end_to_end.py` asserts it does.
+
+**Also surfaced.** `saw_done` records whether `[DONE]` arrived. A stream that ends
+without it was cut short; the old code could not tell a complete answer from a
+truncated one.
+
+**Mutation check.** Reverting to a parser that drops `raw` and treats garbage as a
+quiet stream fails 2 of the 19 tolerance tests. **Sandbox:** the stand-in run
+(8 lines, 0 malformed, `saw_done`) ran here and is filed UNCALIBRATED.

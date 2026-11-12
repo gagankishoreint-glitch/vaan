@@ -72,6 +72,17 @@ class Attempt:
     tokens_out: Optional[int] = None
     tokens_cached: Optional[int] = None
     rl_headers_raw: dict = field(default_factory=dict)   # unmodified strings
+    #: Every SSE line received, verbatim, with its parse outcome. Empty for
+    #: non-streamed attempts. This exists so a failed stream can be diagnosed from
+    #: the event log alone: the previous parser discarded unparseable lines, which
+    #: made "provider sent garbage" and "provider sent nothing" the same observation.
+    sse_raw: list = field(default_factory=list)
+    n_sse_lines: int = 0
+    n_sse_malformed: int = 0
+    sse_saw_done: Optional[bool] = None
+    #: A protocol fault, distinct from a timeout. Retryable, but logged as its own
+    #: outcome so the two never get averaged together.
+    protocol_error: Optional[str] = None
     error_body: Optional[str] = None
 
     def finished(self) -> bool:

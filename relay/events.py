@@ -136,6 +136,13 @@ class RequestScope:
             tokens_cached=attempt.tokens_cached,
             rl_headers_raw=attempt.rl_headers_raw,
             error_body=attempt.error_body,
+            # Wire evidence. Present only for streamed attempts; a truncated stream
+            # is otherwise indistinguishable from an empty one after the fact.
+            sse_raw=getattr(attempt, "sse_raw", None) or None,
+            n_sse_lines=getattr(attempt, "n_sse_lines", None),
+            n_sse_malformed=getattr(attempt, "n_sse_malformed", None),
+            sse_saw_done=getattr(attempt, "sse_saw_done", None),
+            protocol_error=getattr(attempt, "protocol_error", None),
         )
 
     def abandon(self, reason: str = "user") -> None:

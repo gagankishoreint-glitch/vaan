@@ -338,6 +338,13 @@ class Gateway:
                 # Same reconciliation as the buffered path, because a streamed run
                 # must behave like a buffered one. Skipping it meant the bucket was
                 # only ever corrected on the probe's non-streamed calls.
+                # Carry the wire evidence onto the attempt so it reaches the event
+                # log. Without this the tolerant parser would only be observable in
+                # a unit test, which is not where the post-mortem happens.
+                attempt.sse_raw = [r.raw for r in st.raw_lines]
+                attempt.n_sse_lines = st.n_raw_lines
+                attempt.n_sse_malformed = st.n_malformed
+                attempt.sse_saw_done = st.saw_done
                 attempt.rl_headers_raw = st.headers or {}
                 rl = parse_rl_headers(st.headers or {})
                 attempt.retry_after_s = rl["retry_after_s"]
