@@ -21,6 +21,12 @@ models:
   # the service rejects the parameter, so this is the fallback until then.
   reasoning_effort: "low"
   buckets_separate_per_model: null    # set by P1 probe: exhaust one model, watch the other's headers
+  # Model cascade (item F). rewrite/verify -> small, draft -> large at L0; at L1 and
+  # above EVERYTHING -> small. Depends on the buckets above being separate: if they
+  # are shared, routing saves nothing and the log says so.
+  cascade:
+    enabled: true
+    draft_large_at_l0: true           # UNMEASURED: quality-vs-cost of a large draft
 
 user:
   patience_s: null                    # set by L5 measurement: observed time-to-abandon in the harness

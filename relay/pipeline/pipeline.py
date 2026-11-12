@@ -15,6 +15,8 @@ from relay.config import Config
 from relay.contracts import Citation, NoEvidence, PassagesOnly, Reply, is_reply
 from relay.gateway.gateway import DeadlineExceeded, BreakerOpen, Gateway
 from relay.pipeline.verify import check_citations, check_numbers_present, mint
+
+from relay.pipeline.cascade import CascadeConfig, model_for, routing_event_fields
 from relay.retrieval.bm25 import Hit, Retriever
 from relay.retrieval.text import contains_quote
 
@@ -77,8 +79,18 @@ def send_reply(reply: Optional[Reply], *, abandoned: bool = False) -> Optional[R
 class Pipeline:
     def __init__(self, cfg: Config, retriever: Retriever, gateway: Gateway,
                  scope, embed_quote_from: Optional[callable] = None,
-                 patience_s: Optional[float] = None, stream: bool = False):
+                 patience_s: Optional[float] = None, stream: bool = False,
+                 ladder_level: int = 0, tpm_remaining_frac: Optional[float] = None,
+                 queue_wait_s: float = 0.0):
         self.cfg = cfg
+        #: The degradation level for THIS request, computed by
+        #: `relay.pipeline.ladder.compute_level` from budget state. Passed in rather
+        #: than recomputed here: the same level routes the model (item F), scales
+        #: top_k and decides whether generation is allowed, and three independent
+        #: computations of it would eventually disagree.
+        self.ladder_level = ladder_level
+        self.tpm_remaining_frac = tpm_remaining_frac
+        self.queue_wait_s = queue_wait_s
         self.r = retriever
         self.gw = gateway
         self.scope = scope
@@ -115,9 +127,17 @@ class Pipeline:
 
     async def _draft(self, hits, question: str, stream: bool = False):
         self._t_request_sent = self.gw.clock.now()
+        # ROUTING IS ONE FUNCTION (item F). The draft is the only step whose output
+        # the user reads, so it is the only one that goes to the large model -- and
+        # only at L0. At L1 and above everything collapses to small, because sending
+        # the draft to the large model would undo the level just chosen.
+        cascade = CascadeConfig.from_config(self.cfg)
+        model_id = model_for("draft", self.ladder_level, cascade)
+        self.scope.emit("cascade.route", **routing_event_fields(
+            "draft", self.ladder_level, cascade))
         body = await self.gw.call(
             scope=self.scope, step="draft",
-            model=self.cfg.get("models.small.id"),
+            model=model_id,
             messages=[{"role": "user", "content": DRAFT_PROMPT.format(
                 passages=format_passages(hits), question=question)}],
             max_tokens=self.cfg.get("pipeline.max_tokens.draft", 400),

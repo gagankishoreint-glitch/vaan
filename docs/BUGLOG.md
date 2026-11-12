@@ -933,3 +933,35 @@ config, so it is the one that reports as provisional today.
 **Sandbox.** Boundary walk at 0.90 / 0.30 / 0.2499 / 0.10 / 0.019 / 0.0 plus queue-only
 cases, all matching the configured boundaries. UNCALIBRATED — the thresholds are
 exercised, not justified.
+
+## BUG-040 · L6 pipeline · the large model was configured and never called
+**Cause.** `models.large.id` was set in config and referenced by **no code path**.
+Every step — the only step, `draft` — used `models.small.id`. The cascade therefore
+did not exist, and the "two models" in the report would have been a configuration
+line rather than a behaviour.
+
+**Built.** `model_for(step, level, cfg)` is the single routing function:
+`draft` → large at L0, `rewrite`/`verify` → small always, and at L1 and above
+**everything** → small.
+
+**The order is the design.** The ladder check comes **first**. A cascade that only
+looks at the step — "draft goes to large" — passes a per-step test and is wrong,
+because at L1 it would send the draft to the large model and undo the level just
+chosen. A mutation moving the ladder check after the step routing fails
+`test_everything_goes_to_small_at_l1_and_above`.
+
+**An unknown step raises.** Defaulting a typo to the small model looks like working
+code and quietly downgrades quality.
+
+**Depends on item B, and says so.** With a shared bucket, routing from large to small
+moves no budget — the cascade would be a comment, not a control. `cascade_effective()`
+returns False when `buckets_separate_per_model` is False, and the value is emitted on
+every routing event, so the report cannot claim a saving that did not occur. Q-03 is
+still OPEN, so **the saving is UNVERIFIED today**.
+
+**Not yet built.** `rewrite` and `verify` are routed correctly but do not exist as
+pipeline steps — only `draft` is called. The routing table is ready for them; the
+steps are item G's neighbourhood and the brief's "corrective RAG".
+
+**Sandbox.** Routing table at L0/L1/L2 for all three steps. UNCALIBRATED; no model was
+called, and `draft_large_at_l0` is UNMEASURED.
