@@ -10,7 +10,7 @@ Each invariant from the brief, where it is enforced, and what would catch a viol
 | 4 | waiting + working + retrying ~= total | `RequestScope.finish` is the only exit, so the three parts come from one place | I4 with `observability.latency_sum_tolerance_s` | `test_latency_sum_mismatch_fails_and_within_tolerance_passes`, `test_retry_sleep_without_totals_fails` |
 | 5 | `send_reply` accepts only `VerifiedAnswer | NoEvidence | PassagesOnly` | `contracts.is_reply()` is the single test; P5/P6 `send_reply` asserts it | I5 permitted reply types | `test_is_reply_is_the_h1_gate`, `test_unpermitted_reply_fails` |
 | 6 | No tokens consumed after abandonment | P7: cancel the task, then assert no `attempt.*` follows | I6 tokens after `request.abandoned` | `test_tokens_after_abandon_fail` |
-| 7 | Every cited chunk_id exists; every quote is a verbatim substring | P6 `verify.py`: code check before any LLM check | `scripts/check_citations.py` (lands with P2 chunks) | P6 |
+| 7 | Every cited chunk_id exists; every quote is a verbatim substring | P6 `verify.py`: code check before any LLM check | **enforced in-process only** — `scripts/check_citations.py` was planned and never written; see note below | `test_every_gold_quote_resolves_in_its_own_chunk`, `test_hit_is_decided_by_quote_containment_not_chunk_id` |
 | 9 | (new, D-008) `backend` is run scope, `attempt_backend` is attempt scope | `ReservedFieldError` on any collision with the envelope | I7 | `test_reserved_field_collision_raises`, 4 `I7` cases |
 | 8 | `VerifiedAnswer` only via `mint_verified()`, only from `pipeline/verify.py` | `__post_init__` raises unless `_minted` | **AST lint** over `relay/` | `test_mint_verified_only_called_from_verify_module`, `test_direct_construction_rejected` |
 
@@ -24,6 +24,13 @@ Each invariant from the brief, where it is enforced, and what would catch a viol
 | 1 (contracts are leaves) | `test_contracts_module_is_a_leaf` |
 
 ## Honest gaps
+
+- **Invariant 7 has no file-level checker.** `scripts/check_citations.py` is cited in an
+  earlier revision of this document and does not exist. Verification is enforced by
+  `relay/pipeline/verify.py` at runtime (a correct, pre-send check), but unlike I1–I8
+  there is no independent pass over the written record. That asymmetry is real: a
+  verification bug and its evidence would be wrong together. Writing the checker needs
+  the chunk corpus, which is absent on a clean clone.
 
 - Invariant 3, 6, 7 are **not yet enforceable** because the code they guard does not exist.
   The checker already accepts and validates the event shapes they will emit, so a violation

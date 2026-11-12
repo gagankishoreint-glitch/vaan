@@ -18,6 +18,16 @@ Observed: 5 of 8 abandoned, **every one at 0.050 s of a 0.05 s patience budget**
 
 ## What happens on abandonment
 
+> **Provenance of `runs/h4_tokens.json`.** Nothing in `scripts/` used to write this
+> file — it was an orphan. It is now produced by
+> `scripts/regen_orphan_artifacts.py --only h4`, and the committed values
+> (completed 10/0, admitted 10/10, day_tokens 2000/2000) reproduce exactly against
+> the local stand-in. **What this does and does not show:** the 2000/2000 debited on
+> the *cancelled* run is an accounting property of the stand-in — it charges the day
+> bucket at admission, before generation — so it demonstrates the H4 *cancellation*
+> path, not provider billing. Groq's real billing on client disconnect was never
+> observed here and must not be claimed.
+
 ```
 patience timer fires
   -> asyncio.wait_for cancels the draft coroutine

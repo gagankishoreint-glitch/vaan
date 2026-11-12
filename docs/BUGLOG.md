@@ -327,6 +327,20 @@ triggered it.
 **Test.** `test_verification_normalises_whitespace_between_draft_and_source`,
 `test_streamed_and_buffered_pipelines_agree`.
 
+## BUG-019 · (number unused — no bug was ever recorded here)
+**Status: NOT A BUG. This number is deliberately left empty.**
+
+The sequence runs BUG-018 → BUG-020 with no BUG-019 entry anywhere in this file or in
+the git history. An audit of the repository could not determine what, if anything,
+BUG-019 was meant to record, so **no entry has been invented for it**. Renumbering
+BUG-020..028 to close the gap was rejected: those numbers are cited from
+`docs/DECISIONS.md`, `docs/STREAMING.md` and several commit messages, and renumbering
+would silently break every one of those references.
+
+If the supervisor has a record of what BUG-019 was, add it here. Otherwise treat the
+gap as a gap: the count of real bugs in this project is the number of headings that
+have a cause, not the highest number used.
+
 ## BUG-020 · L4 instrumentation · "verification cost" was actually generation time
 **Cause.** `user_ttft - model_ttft` was reported as verification cost. But H1 forbids
 showing anything unverified, so the pipeline cannot observe the user-facing answer
