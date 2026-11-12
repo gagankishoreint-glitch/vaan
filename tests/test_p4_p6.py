@@ -799,19 +799,16 @@ def test_a_short_answer_does_not_ratchet_the_bucket_shut(tmp_path):
     gw.budget.take(8000, now=clock.now())      # the whole window is still usable
 
 
-def test_evaluate_counts_ambiguous_separately_from_unanswerable():
-    """BUG-027: `evaluate()` folded ambiguous into unanswerable, so a correct
-    admission was scored as a false answer and the published rate was too LOW.
+def bug027_corpus():
+    """A synthetic BM25 corpus that scores the way the gate tests need.
 
-    Deliberately built on a SYNTHETIC corpus rather than the real index: this is a
-    property of the denominator arithmetic, not of the papers, and the PDFs are
-    absent on a clean clone -- a test that needs them would fail here instead of
-    pinning the bug. The existing test pinned `sweep()` only; this pins the function
-    that writes the committed artifact.
+    Shared by the BUG-027 test and the table tests so there is ONE definition of
+    "a corpus BM25 can actually rank". Deliberately not the real index: the PDFs
+    are absent on a clean clone, and this is a property of denominator arithmetic,
+    not of the papers.
     """
     from relay.contracts import Chunk
     from relay.retrieval.bm25 import Retriever
-    from scripts.retrieval_eval import evaluate
 
     texts = [
         "The Transformer uses eight attention heads in the base configuration. "
@@ -838,11 +835,8 @@ def test_evaluate_counts_ambiguous_separately_from_unanswerable():
     r = Retriever(chunks)
     q_high = "How many attention heads does the Transformer use?"
     q_low = "zebra xylophone quartz"
-    # Precondition: the phrasing does what the test needs, so a change in BM25
-    # fails here with a clear message rather than silently proving nothing.
     assert r.search(q_high, k=1)[0].score > 1.0, "q_high must score above the gate"
     assert r.search(q_low, k=1)[0].score < 1.0, "q_low must score below the gate"
-
     qs = [
         {"qid": "A1", "type": "single", "gold": ["syn-v1:s0:c0000"],
          "question": q_high, "answer": "8"},
@@ -851,6 +845,19 @@ def test_evaluate_counts_ambiguous_separately_from_unanswerable():
         {"qid": "U1", "type": "unanswerable", "gold": [], "question": q_low,
          "answer": "none"},
     ]
+    return r, qs
+
+
+def test_evaluate_counts_ambiguous_separately_from_unanswerable():
+    """BUG-027: `evaluate()` folded ambiguous into unanswerable, so a correct
+    admission was scored as a false answer and the published rate was too LOW.
+
+    The existing test pinned `sweep()` only; this pins the function that writes the
+    committed artifact.
+    """
+    from scripts.retrieval_eval import evaluate
+
+    r, qs = bug027_corpus()
     out = evaluate(r, qs, k=4, threshold=1.0)
     assert out["n_answerable"] == 1, out
     assert out["n_unanswerable"] == 1, "ambiguous must not be in the U denominator"

@@ -173,9 +173,23 @@ rather than 1 of 7. The old figure understated the rate by 75%.
 >
 > | setting | threshold | A refused | U admitted | T admitted | false_answer |
 > |---|---|---|---|---|---|
-> | 600/100 | 15.477 | 5/20 | 0/4 | 0/3 | **0/4 = 0.0%** |
-> | 900/150 | 15.86 | 5/20 | 1/4 | 0/3 | **1/4 = 25.0%** |
+> | 600/100 | 15.477 | 6/20 | 0/4 | 0/3 | **0/4 = 0.0%** |
+> | 900/150 | 15.86 | 6/20 | 1/4 | 0/3 | **1/4 = 25.0%** |
 > | 1200/200 | 15.876 | 5/20 | 1/4 | 0/3 | **1/4 = 25.0%** |
+>
+> **Correction.** The A-refused column read `5/20` on all three rows in the first
+> version of this table. That was taken from the *sweep*'s threshold rows, which
+> compare **rounded** scores; `evaluate()` — the function that writes
+> `retrieval_results.json`, and the one that matches what the pipeline actually does
+> — compares **raw** scores. One query (A8) has a raw score a hair under 15.86 that
+> rounds to exactly 15.86, so the two disagree 5 vs 6 at the committed setting.
+> The stored summary fields (`false_abstain` = 0.30, 0.30, 0.25) were always right;
+> the transcription into this table was not. `sweep()` now records the full-precision
+> `exact` threshold so this cannot recur, and the committed sweep artifact is flagged
+> as pre-fix by `tests/test_make_tables.py` until the corpus is rebuilt.
+>
+> The **false-answer rate is unaffected**: no U or T score sits within 0.01 of its
+> threshold, so 0.0% / 25.0% / 25.0% holds at either reading.
 >
 > So the corrected false-answer rate at the committed operating point is **25.0%,
 > not the 14.3% stored and not the 12.5% below** — every one of those was computed

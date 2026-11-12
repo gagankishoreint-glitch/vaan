@@ -580,3 +580,29 @@ decision rather than a pattern exemption. Mutation check: restoring
 
 **Lesson.** The lint that existed checked model ids and URLs. The numbers were the
 unwatched half — and a default is a magic number wearing a safety argument.
+
+## BUG-029 · L3 evaluation · two "15.86"s were different thresholds
+**Cause.** `sweep()` derives its candidate thresholds from scores rounded to three
+decimals, compares raw scores against them, then stores `round(t, 3)`. One answerable
+query (A8) has a raw score a hair below the committed `15.86` that rounds to exactly
+`15.86`. So a sweep point displaying **15.86** — which is really A8's own score —
+counts A8 as gated-in, while `evaluate()` comparing against the config value `15.86`
+counts it as refused. Same printed threshold, different answer: **5/20 vs 6/20**.
+
+**Consequence.** `docs/P3_RETRIEVAL.md` quoted `5/20` for all three operating points,
+transcribed from the sweep. The correct column is **6/20, 6/20, 5/20** — which is what
+`retrieval_results.json`'s own `false_abstain` field (0.30, 0.30, 0.25) always said.
+The doc contradicted the artifact it was describing.
+
+**Not affected.** The false-answer rate. No U or T score lies within 0.01 of its
+threshold at any setting, so 0.0% / 25.0% / 25.0% holds under either reading. This
+bug moved a count of *refusals*, not the headline rate.
+
+**Fix.** `sweep()` now stores `exact` (the full-precision value the comparison used)
+alongside the display `threshold`. `scripts/make_tables.py --check` re-derives every
+false-answer figure from the stored rows and fails when a doc row disagrees; it
+catches the historical `12.5%` if reintroduced.
+
+**Why it survived.** Two artifacts disagreed and both were arithmetically correct, so
+neither looked wrong in isolation. The discrepancy was only visible from a third
+place that recomputed from the rows — which is what `make_tables.py` is for.

@@ -235,3 +235,20 @@ a number nobody measured is not safety.
 
 **Re-open if.** A measured key genuinely needs to run before its measurement exists —
 then it is null in config and belongs in `_PROVISIONAL` with the reason written down.
+
+### D-018 · 2026-11-11 · P3 · Thresholds are recorded at full precision
+**Decision.** Any artifact that records a decision boundary stores the value the
+comparison actually used, in addition to whatever rounded form is displayed.
+
+**Why.** BUG-029: `sweep()` stored `round(t, 3)`, so a candidate that was really
+`15.8599…` printed as `15.86` — indistinguishable from the committed `15.86`, while
+being a different threshold that gave a different count. A reader (and a table
+generator, and the author) could not tell which decision a row described.
+
+**Rules out.** Rounding a threshold before storing it, and quoting a threshold to
+fewer decimals than it was compared at. Display precision is a presentation choice;
+it must not be the only record.
+
+**Re-open if.** An artifact format genuinely cannot carry full precision — then it
+must carry the counts as well, so the decision is recoverable even if the boundary
+is not.

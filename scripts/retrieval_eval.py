@@ -171,6 +171,12 @@ def sweep(retriever: Retriever, questions: list[dict], k: int,
         fb = sum(1 for s in una if s >= t)      # unanswerable admitted
         amb_in = sum(1 for s in amb if s >= t)  # ambiguous admitted (not an error)
         points.append({
+            # Full precision on purpose. Rounding this to 3dp made two DIFFERENT
+            # thresholds print as "15.86" while giving different counts (5 vs 6
+            # answerable refused at the committed setting) -- an audit could not
+            # tell which decision the row described. `exact` is the value the
+            # comparison above actually used; `threshold` is for display only.
+            "exact": t,
             "threshold": round(t, 3),
             "false_abstain": fa, "n_answerable": n_a,
             "false_abstain_frac": fa / n_a if n_a else 0.0,
