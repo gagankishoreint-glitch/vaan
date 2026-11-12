@@ -93,8 +93,13 @@ standin:
   tokens_per_s: null                  # set by P1 probe: observed generation rate
   error_rate: null                    # set by P1 probe: observed 5xx rate (0 if none seen)
   p429_rate: null                     # set by P1 probe: observed 429 rate under our traffic
-  per_minute_limit: null              # set by P1 probe: observed x-ratelimit-limit-tokens
+  per_minute_limit: 8000              # OBSERVED (transcribed, n=4); raw JSONL pending
   per_day_limit: null                 # set by P1 probe: observed x-ratelimit-limit-requests
+  # Whether the provider gives back unused completion cap when the call finishes.
+  # OPEN (Q-06). false = what the four transcribed observations show: the deficit
+  # carried the FULL cap even when only 41 of 80 tokens were generated. Flip it to
+  # run the A/B that settles the question. UNMEASURED as a switch.
+  refund_unused_cap: false
 
 observability:
   latency_sum_tolerance_s: 0.05       # tolerance for waiting + working + retrying ~= total

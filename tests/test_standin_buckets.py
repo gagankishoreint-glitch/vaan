@@ -17,7 +17,7 @@ from __future__ import annotations
 import pytest
 
 from relay.ratelimit_headers import parse_rl_headers
-from relay.standin.server import Bucket, StandIn
+from relay.standin.server import Bucket, RefillBucket, StandIn
 
 
 def _standin(**kw) -> StandIn:
@@ -33,7 +33,7 @@ def _standin(**kw) -> StandIn:
     s.calls = 0
     import time
     now = time.monotonic()
-    s.tpm_bucket = Bucket(s.tpm, 60.0, reset_at=now + 60.0)
+    s.tpm_bucket = RefillBucket(s.tpm, 60.0, deficit=0.0, last=now)
     s.day_bucket = Bucket(s.tpd, 86400.0, reset_at=now + 86400.0)
     s.req_bucket = Bucket(s.rpd, 86400.0, reset_at=now + 86400.0)
     return s
@@ -45,7 +45,7 @@ def _hdr(resp) -> dict:
 
 def test_minute_429_reports_the_minute_bucket():
     s = _standin()
-    s.tpm_bucket.used = s.tpm                 # minute exhausted
+    s.tpm_bucket.deficit = s.tpm              # minute exhausted
     import time
     r = s._r429(time.monotonic(), "minute", "tokens-per-minute exhausted")
     h = _hdr(r)
@@ -98,7 +98,7 @@ def test_three_buckets_are_independent():
     assert int(h["x-ratelimit-remaining-tokens"]) == 1000
     assert int(h["x-ratelimit-remaining-requests"]) == 10
     s2 = _standin(tpm=1000, tpd=5000, rpd=10)
-    s2.tpm_bucket.used = 1000
+    s2.tpm_bucket.deficit = 1000
     import time
     h2 = _hdr(s2._r429(time.monotonic(), "minute", "x"))
     assert int(h2["x-standin-remaining-day-tokens"]) == 5000

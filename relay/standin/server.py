@@ -50,6 +50,61 @@ def _knob(name: str) -> float:
 
 
 @dataclass
+class RefillBucket:
+    """A continuously-refilling token bucket, which is what the observations show.
+
+    The old `Bucket` was a FIXED window: `used` reset at `reset_at`, and the
+    advertised reset was always "start of the next window" (~60 s right after a
+    request). The transcribed observations contradict that flatly -- `reset-tokens`
+    was 1.17 s, then 1.335 s, then 0.96 s, and in all three
+    `reset = deficit / (8000/60)`. That is a bucket refilling at 133.3 tokens/s, not
+    one that empties at a minute boundary.
+
+    Model: `deficit` tokens are currently owed. It decays at `rate` per second, and
+    `reset` is the time for the current deficit to decay to zero.
+
+    CALIBRATION: n=4 transcribed points, raw JSONL pending. The refill rate is
+    inferred from `limit / 60`, which is a docs-table assumption, not a measurement
+    of the refill function. See docs/STANDIN.md.
+    """
+
+    limit: int
+    window_s: float
+    deficit: float = 0.0
+    last: float = 0.0
+
+    @property
+    def rate(self) -> float:
+        return self.limit / self.window_s
+
+    def _decay(self, now: float) -> None:
+        if self.last:
+            self.deficit = max(0.0, self.deficit - (now - self.last) * self.rate)
+        self.last = now
+
+    def remaining(self, now: float) -> int:
+        self._decay(now)
+        return max(0, int(round(self.limit - self.deficit)))
+
+    def reset_in(self, now: float) -> float:
+        """Seconds until the current deficit is fully refilled."""
+        self._decay(now)
+        return self.deficit / self.rate if self.rate else 0.0
+
+    def take(self, n: int, now: float) -> tuple[bool, float, int]:
+        self._decay(now)
+        if self.deficit + n > self.limit:
+            return False, self.deficit / self.rate, max(0, int(self.limit - self.deficit))
+        self.deficit += n
+        return True, self.deficit / self.rate, max(0, int(round(self.limit - self.deficit)))
+
+    def refund(self, n: float, now: float) -> None:
+        """Give back unused reservation (Groq may or may not do this -- see config)."""
+        self._decay(now)
+        self.deficit = max(0.0, self.deficit - n)
+
+
+@dataclass
 class Bucket:
     """A token bucket. Check-and-take is synchronous: no await between (rule 9)."""
     limit: int
@@ -117,14 +172,23 @@ class StandIn:
     slow_success: bool = False
     hang_s: float = 0.0
     load_slowdown: float = 0.0
-    tpm_bucket: Bucket = field(init=False)
+    #: Whether unused completion cap is given back to the TPM bucket on completion.
+    #: OPEN (Q-06): the four transcribed observations all had completion < cap and
+    #: still show the FULL cap in the deficit (call 1: deficit 156 = 76 + 80 with 41
+    #: generated), which is evidence AGAINST a refund but is only n=4 and never
+    #: isolates the case. Default false = no refund, matching the observation; flip
+    #: this to run the A/B that settles it.
+    refund_unused_cap: bool = False
+    tpm_bucket: RefillBucket = field(init=False)
     day_bucket: Bucket = field(init=False)
     req_bucket: Bucket = field(init=False)
     calls: int = 0
 
     def __post_init__(self):
         now = time.monotonic()
-        self.tpm_bucket = Bucket(self.tpm, 60.0, reset_at=now + 60.0)
+        # Continuously-refilling, because the observations show reset = deficit/rate
+        # rather than a fixed window (see tests/test_standin_observed.py).
+        self.tpm_bucket = RefillBucket(self.tpm, 60.0, deficit=0.0, last=now)
         self.day_bucket = Bucket(self.tpd, 86400.0, reset_at=now + 86400.0)
         self.req_bucket = Bucket(self.rpd, 86400.0, reset_at=now + 86400.0)
         self._rng = random.Random(self.seed)
@@ -145,8 +209,8 @@ class StandIn:
         """
         return {
             "x-ratelimit-limit-tokens": str(self.tpm),
-            "x-ratelimit-remaining-tokens": str(max(0, self.tpm - self.tpm_bucket.used)),
-            "x-ratelimit-reset-tokens": f"{max(0.0, self.tpm_bucket.reset_at - now):.2f}s",
+            "x-ratelimit-remaining-tokens": str(self.tpm_bucket.remaining(now)),
+            "x-ratelimit-reset-tokens": f"{self.tpm_bucket.reset_in(now):.2f}s",
             "x-ratelimit-limit-requests": str(self.rpd),
             "x-ratelimit-remaining-requests": str(max(0, self.rpd - self.req_bucket.used)),
             "x-ratelimit-reset-requests": f"{max(0.0, self.req_bucket.reset_at - now):.0f}s",
@@ -173,12 +237,23 @@ class StandIn:
         ok, wait, _ = self.req_bucket.take(1, now)
         if not ok:
             return self._r429(now, "day_requests", "request-per-day exhausted")
-        ok, wait, _ = self.day_bucket.take(max_tokens or 1, now)
+        # Reservation is PROMPT + CAP, not cap alone. The transcribed call 1 shows
+        # deficit 156 = prompt 76 + cap 80 while only 41 tokens were generated, so
+        # both halves are reserved and the cap is reserved in full (Q-06, n=4).
+        # Charging cap alone made the stand-in advertise remaining 7920 where the
+        # service advertised 7844 -- the same order, the wrong number.
+        prompt_tokens = max(1, len(json.dumps(body)) // 4)
+        reserved = prompt_tokens + (max_tokens or 1)
+        # Snapshot the rate-limit state AT RESERVATION, not at response.
+        # The transcribed reset 1.17 s == 156/133.3 exactly, i.e. the advertised
+        # deficit is the reservation, undecayed. Computing headers after the TTFT
+        # sleep refilled ~24 tokens and silently cancelled the prompt half of the
+        # reservation, so remaining looked like cap-only.
+        self._rl_snapshot_at = now
+        ok, wait, _ = self.day_bucket.take(reserved, now)
         if not ok:
             return self._r429(now, "day_tokens", "tokens-per-day exhausted")
-        # NOTE: max_tokens is taken up front, which mirrors the UNVERIFIED hypothesis
-        # that TPM is reserved rather than charged on usage (Q-06). Config switch it.
-        ok, wait, _ = self.tpm_bucket.take(max_tokens or 1, now)
+        ok, wait, _ = self.tpm_bucket.take(reserved, now)
         if not ok:
             return self._r429(now, "minute", "tokens-per-minute exhausted")
 
@@ -196,22 +271,35 @@ class StandIn:
         await asyncio.sleep(latency)
 
         n_out = min(max_tokens or 16, 40)
-        usage = {"prompt_tokens": max(1, len(json.dumps(body)) // 4),
+        usage = {"prompt_tokens": prompt_tokens,
                  "completion_tokens": n_out,
                  "total_tokens": 0}
         usage["total_tokens"] = usage["prompt_tokens"] + usage["completion_tokens"]
 
+        # Refund the unused part of the reservation, if configured to. OPEN (Q-06):
+        # the observations are consistent with NO refund (deficit showed the full cap
+        # even when 41 of 80 were generated), but n=4 and never isolating. Default is
+        # the observed behaviour; this switch exists so the A/B can settle it.
+        if self.refund_unused_cap:
+            unused = max(0, reserved - (usage["completion_tokens"]
+                                        + usage["prompt_tokens"]))
+            if unused:
+                self.tpm_bucket.refund(unused, time.monotonic())
+
         content, _ = synthesize_answer(body, n_out)
         if body.get("stream"):
             return StreamingResponse(
-                self._stream(content, usage, latency), media_type="text/event-stream")
+                self._stream(content, usage, latency),
+                media_type="text/event-stream",
+                headers=self._headers(getattr(self, "_rl_snapshot_at",
+                                              time.monotonic())))
         return JSONResponse({
             "id": "chatcmpl-standin", "object": "chat.completion",
             "created": int(time.time()), "model": body.get("model"),
             "choices": [{"index": 0, "finish_reason": "stop",
                          "message": {"role": "assistant", "content": content}}],
             "usage": usage,
-        }, headers=self._headers(time.monotonic()))
+        }, headers=self._headers(getattr(self, "_rl_snapshot_at", time.monotonic())))
 
     def _r429(self, now: float, kind: str, why: str) -> JSONResponse:
         """A 429 that describes the bucket that actually refused.
@@ -223,7 +311,7 @@ class StandIn:
         minute-vs-day classification depends on exactly this distinction (Q-09).
         """
         if kind == "minute":
-            wait = max(0.0, self.tpm_bucket.reset_at - now)
+            wait = self.tpm_bucket.reset_in(now)
             typ, hdrs = "tokens", {"x-ratelimit-reset-tokens":
                                    f"{wait:.2f}s"}
         elif kind == "day_tokens":

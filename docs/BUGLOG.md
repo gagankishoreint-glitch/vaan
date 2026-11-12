@@ -692,3 +692,35 @@ test now asserts the corpus even *has* such a gap and places the threshold stric
 inside it: `disp0 < threshold <= raw0`. With that, restoring `round(top, 3)` fails
 `test_stored_score_reproduces_the_gate_decision`, and the fix passes. Recorded because
 a mutation check that passes is evidence about the test, not the code.
+
+## BUG-033 · stand-in · the TPM bucket was a fixed window and reserved the wrong amount
+**Cause, part 1 — the wrong model.** `Bucket` reset `used` at a boundary and reported
+`reset = reset_at - now`, which right after a request is ~60 s. The transcribed real
+observations show `reset-tokens` of **1.17 s / 1.335 s / 0.96 s**, and in every case
+`reset = deficit / (8000/60)`. The service refills **continuously**; the stand-in
+emptied once a minute. It got `remaining` exactly right (7844) and `reset` wrong by a
+factor of ~50 — and `reset` is the number the gateway uses to decide when to retry.
+
+**Cause, part 2 — the wrong amount.** The stand-in reserved `max_tokens` alone.
+Call 1's deficit was 156 = prompt **76** + cap **80**, with only 41 generated, so the
+service reserves prompt + cap and reserves the cap in full. Charging cap only made the
+stand-in advertise remaining 7920 against the service's 7844 — same order, wrong
+number, which is how a wrong model survives a spot check.
+
+**Cause, part 3 — headers taken after the sleep.** Even with the reservation fixed, the
+advertised remaining came out cap-only because headers were computed *after* the TTFT
+sleep, by which time ~24 tokens had already refilled and cancelled the prompt half.
+The observation `reset 1.17 s = 156/133.3` exactly implies the advertised deficit is the
+reservation **undecayed**, so the snapshot is now taken at reservation time.
+
+**Fix.** `RefillBucket` (continuous refill, `reset = deficit / rate`), reservation =
+`prompt + cap`, rate-limit snapshot at reservation. `standin.refund_unused_cap`
+(default `false`, matching the observation) makes the refund an explicit switch:
+Q-06 is settled for *reservation* by n=4 but the refund branch was never isolated.
+
+**Evidence.** `tests/test_standin_observed.py` (7 tests) feeds the four transcribed
+points to the bucket and also **records the refutation** of the fixed-window model, so
+the change cannot be quietly reverted by someone who assumes a bucket is a window.
+`runs/standin/refill_bucket.json` (UNCALIBRATED) shows the stand-in's residual
+`7896` vs `7844` is fully explained by `len(json)//4 = 24` versus a real 76-token
+prompt — the documented tokenizer difference, not a bucket error.

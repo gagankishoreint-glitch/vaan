@@ -26,8 +26,9 @@ value can never be mistaken for a measured one:
 | `tokens_per_s` | 90 | P1 `stream` mode |
 | `error_rate` | 0.0 | P1 (observed 5xx rate) |
 | `p429_rate` | 0.0 | P1 `burst` |
-| `per_minute_limit` | 8000 | limits page |
-| `per_day_limit` | 200000 | limits page |
+| `per_minute_limit` | **8000** | **OBSERVED** (transcribed, n=4) — was docs table |
+| `per_day_limit` | 200000 | limits page, still UNVERIFIED (Q-04) |
+| `refund_unused_cap` | false | **OBSERVED**-consistent, never isolated (Q-06) |
 
 **The stand-in is therefore a load *shape* generator, not a latency model.** Any
 latency number measured against it is a property of this file, not of Groq. The
@@ -46,41 +47,64 @@ report must not present stand-in latency as provider latency.
 
 ## Bucket model: what is VERIFIED and what is not
 
-`[UNVERIFIED]` — **nothing in this section has been observed against the real
-service.** No real call has been made (no key is used in this work). The stand-in is
-built from the Groq docs table and from inference.
+### Transcribed observations — `transcribed, n=4, raw JSONL pending`
 
-| claim | status | where |
-|---|---|---|
-| header names `x-ratelimit-limit/remaining/reset-{tokens,requests}` | docs table | `_headers()` |
-| `*-requests` describes a **day**, `*-tokens` a **minute** | **UNVERIFIED (Q-04)** | `parse_rl_headers` docstring |
-| `max_tokens` is reserved against TPM up front | **UNVERIFIED (Q-06)** | `complete()` note, item 3 below |
-| every 429 carries `retry-after` | **UNVERIFIED (Q-11)** | `_r429()` always sends it |
-| a day-limit 429 is distinguishable from a minute one | **UNVERIFIED (Q-09)** | `_r429()` `type` field |
+Real runs by the supervisor against `openai/gpt-oss-20b` on a **free account**. These
+are relays of his `curl` output, not a stored artifact: `calibration/probe/` lands
+when he is back at his PC. `n=4`, all within ~2 s of each other, so treat every
+inference below as provisional.
 
-**What changed (5e).** `_r429` used to have a single `day` branch that always
-reported `retry-after: 60`, always `type: "requests"`, and always sent
-`reset-tokens` computed from the **minute** bucket — so a per-day exhaustion told the
-client to retry in under a minute. It now takes `minute | day_tokens | day_requests`
-and reports the refusing bucket's own reset. `[VERIFIED in the stand-in]` by
-`tests/test_standin_buckets.py` and by `runs/standin/bucket_429.json`
-(UNCALIBRATED).
+```
+limit-tokens 8000, limit-requests 1000
+call 1 (full bucket, cap 80): prompt 76, completion 41
+       remaining-tokens 7844, reset-tokens 1.17 s
+       remaining-requests 999, reset-requests 1m26.4 s
+call 2 (+0.79 s): remaining 7822, reset 1.335 s
+call 3 (+0.98 s): remaining 7872, reset 960 ms
+```
 
-**Stand-in-only headers.** The stand-in enforces a day *token* bucket that Groq is
-not believed to expose. Its counters are emitted under `x-standin-*` names so they
-can never be mistaken for a provider header; a test asserts every `*day*` header
-carries that prefix. The gateway ignores unknown headers, so this costs nothing.
+**What they show.**
 
-**Still absent.** The stand-in does not model a per-request cost that differs from
-`max_tokens`, so it cannot settle Q-06 on its own even when the probe runs.
+| finding | confidence |
+|---|---|
+| deficit = prompt + **cap**, not prompt + completion (call 1: 156 = 76 + 80, with 41 generated) | strong for this shape, n=1 isolates it -> Q-06 favours up-front reservation |
+| `reset-tokens` = deficit / (8000/60) in **all three** | strong: three independent points, exact to the recorded precision |
+| the TPM bucket refills **continuously** at 133.3 tokens/s | **refutes the old fixed-60 s-window model**, which would report ~60 s |
+| `reset-requests` 1m26.4 s = 86400/1000 | consistent with `*-requests` being per day (Q-04) |
+
+**What they do NOT show.** The refill function over gaps longer than ~2 s; whether
+unused cap is refunded on completion (never isolated — hence
+`standin.refund_unused_cap`, default `false` because the observed deficit carried the
+full cap); what a 429 body looks like (Q-09); whether `retry-after` is always present
+(Q-11). **No 429 appears in these four observations at all.**
+
+The old `Bucket` (fixed window) got `remaining` right — 7844 exactly — and `reset`
+wrong by a factor of 50. A model can be half right, and the half it gets wrong was
+the half the gateway reads to decide when to retry.
+
+### Verified in the stand-in
+
+`RefillBucket` reproduces the observations: call 1 lands on `remaining 7844,
+reset 1.170` exactly; calls 2–3 land within 1 % of the recorded reset (the inter-call
+gaps survive transcription only to 2 dp, worth ~1.3 tokens).
+`tests/test_standin_observed.py` (5 tests) also *records the refutation* of the
+fixed-window model, so the change cannot be quietly reverted.
+
+### Stand-in-only headers
+
+The stand-in enforces a day *token* bucket that Groq is not believed to expose. Its
+counters are emitted under `x-standin-*` names so they can never be mistaken for a
+provider header; a test asserts every `*day*` header carries that prefix.
 
 ## Documented differences from the real service
 
 1. Model IDs are whatever `config/relay.yaml` says; no real model list.
 2. Token counting is `len(json)/4` for prompts and `max_tokens` for completions.
    Not a tokenizer.
-3. `max_tokens` is charged to the TPM bucket **up front**, mirroring the
-   *unverified* hypothesis that TPM is reserved rather than charged on usage (Q-06).
+3. `max_tokens` is charged to the TPM bucket **up front**. This is no longer a
+   hypothesis: call 1's deficit was 76 + 80 with only 41 tokens generated
+   (transcribed, n=4). Whether unused cap is later refunded is still OPEN, hence
+   `standin.refund_unused_cap` (default false).
 4. Daily reset is a rolling 86400 s window, not a wall-clock boundary.
 5. No context-length limit is enforced (Q-12 unmeasured).
 6. Authentication is not checked.
