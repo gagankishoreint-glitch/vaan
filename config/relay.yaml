@@ -32,6 +32,20 @@ slo:
 
 pipeline:
   max_loops: 1
+  # Exact-match answer cache, in front of the queue. A hit costs 0 tokens and never
+  # waits. Only VerifiedAnswer and NoEvidence are stored: a PassagesOnly(budget_gone)
+  # is a statement about OUR state and caching it would turn a transient shortage
+  # into a durable refusal.
+  cache:
+    enabled: true
+    max_entries: 512
+    ttl_s: 900.0                      # UNMEASURED: how long an answer stays valid
+    # Bumped whenever the prompt text changes, because the cache key includes it.
+    # An answer produced by a different prompt must not be served as this one.
+    prompt_version: "p6.1"
+  # One in-flight pipeline per cache key; followers await it. The run is cancelled
+  # only when the LAST waiter abandons.
+  coalesce: true
   # Stream the draft so model_ttft (first CONTENT delta) is observable. The
   # pipeline still buffers and verifies before sending, so this does not reduce
   # user-visible latency yet -- it makes the timing measurable.

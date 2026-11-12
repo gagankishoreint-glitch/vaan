@@ -819,3 +819,44 @@ from `models.small.id`.
 
 **Mutation check.** Forcing `for_model()` to always return the shared bucket fails 2 of
 6 tests.
+
+## BUG-037 · L6 pipeline · no cache, no coalescing, and a naive version of either is a bug
+**Missing, not broken.** The pipeline ran once per question, every time. Nothing was
+cached, and two concurrent identical questions each ran a full pipeline: two drafts,
+two verifications, two bills.
+
+**Two designs that would have been wrong, and why the chosen one is not.**
+
+1. *Cache keyed on the question.* An answer produced by a different index, a different
+   `top_k`, or a different prompt would be served as this one, and nothing downstream
+   could detect it. The key here includes the normalised question **plus** index id,
+   `top_k`, both model ids and a `prompt_version`, and a test asserts that changing
+   any one of them produces a different key.
+
+2. *Cancel the shared run when any waiter leaves.* That makes the system's behaviour
+   depend on its least patient caller: one impatient user kills the request for
+   everyone sharing it. Coalescing is refcounted, and **only the last departure
+   cancels**. Pinned by `test_one_follower_abandoning_does_not_cancel_the_others` and
+   `test_last_waiter_abandoning_cancels_the_pipeline`.
+
+**Only `VerifiedAnswer` and `NoEvidence` are cached.** `PassagesOnly(budget_gone)` is
+a statement about *our* state at that instant; caching it would convert a transient
+shortage into a durable refusal that outlives the shortage. An unverified answer is
+also the one thing this project must never replay as a result.
+
+**Test-visible evidence.** `cache_hit` and `coalesced_follower` are on the returned
+value *and* emitted to the event log. The 20-question burst is asserted there — one
+leader, 19 followers — because the event log is what a post-mortem reads, and a
+counter only proves an object's internal bookkeeping.
+
+**A bug found in my own first draft.** The leader never decremented the waiter count,
+so the refcount could never reach zero and the pipeline could never be cancelled at
+all — abandonment would have looked implemented and been dead. Fixed to exactly one
+`leave` per waiter on every path.
+
+**Mutation checks.** Cancelling on any departure fails the "one follower leaving"
+test; caching every terminal fails the "only verified" test.
+
+**UNMEASURED.** `ttl_s: 900` is a placeholder with no basis: how long an answer stays
+valid depends on the corpus, which changes only when papers change. The stand-in run
+used no model at all, so it measures the mechanism and **not** any token saving.
