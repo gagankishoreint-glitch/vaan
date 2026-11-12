@@ -500,3 +500,41 @@ correct-looking cleanup code and an API that made the wrong thing natural.
 
 **Not fixed here.** `commit 8f0ff4b` (the supervisor's 351-row ledger) is not on origin;
 `docs/TOKEN_LEDGER.md` was left untouched by this change, by instruction.
+
+## BUG-027 · L2 eval · `evaluate()` still scored ambiguous questions as false answers
+**Cause.** `sweep()` was corrected to split answerable (A) / unanswerable (U) /
+ambiguous (T), and `docs/P3_RETRIEVAL.md` was rewritten to say `false_answer` is
+measured against **4**, not 7. But `evaluate()` — the function that *writes*
+`data/eval/retrieval_results.json` — still built its denominator as "every question
+without gold", which is 4 U + 3 T = **7**. So the committed artifact and the page
+that describes it disagreed, and a test pinned only `sweep()`, so nothing caught it.
+
+**Effect, and its direction.** At the committed operating point the stored file says
+`false_answer = 1/7 = 14.3%`; the correct figure is `1/4 = 25.0%`. The bug made the
+system look **better than it is** at exactly the metric the gate is judged on — the
+failure direction that matters, because it flatters the design. A high score on an
+ambiguous question is *correct behaviour* (several answers are defensible), so
+counting it as a fault both inflated the denominator and, worse, blurred the one
+distinction the page spends a section establishing.
+
+**Fix.** `evaluate()` splits the pool exactly as `sweep()` does, returns
+`n_ambiguous` and `ambiguous_admitted` alongside, and never counts T in
+`false_answer`. New test
+`test_evaluate_counts_ambiguous_separately_from_unanswerable` pins `evaluate()`
+(previously only `sweep()` was pinned).
+
+**Proof.** Verified on a synthetic 10-chunk corpus (the PDFs are unavailable in the
+sandbox, so the real index could not be rebuilt). With one admitted ambiguous
+question and one refused unanswerable one: old code reports `false_answer = 0.5`
+(1/2), fixed code reports `0.0` (0/1). Recomputed from the *existing* stored rows,
+the corrected rates are 0.0% / **25.0%** / **25.0%**.
+
+**Not done, deliberately.** `data/eval/retrieval_results.json` was **not**
+regenerated — the corpus is absent here and the instruction was not to regenerate
+data files without it. `docs/P3_RETRIEVAL.md` carries the status box and the
+recomputed table instead, so the page cannot silently claim agreement with a file
+that still disagrees. Regenerate with `python -m scripts.retrieval_eval` once the
+indexes exist.
+
+**Lesson.** Fixing a metric in the function you are reading is not fixing the metric.
+`grep` every producer of the number, and pin the one that writes the artifact.

@@ -796,3 +796,65 @@ def test_a_short_answer_does_not_ratchet_the_bucket_shut(tmp_path):
         f"{gw.budget.tpm_used} of {gw.budget.tpm} spent -- reserved caps were never "
         "released")
     gw.budget.take(8000, now=clock.now())      # the whole window is still usable
+
+
+def test_evaluate_counts_ambiguous_separately_from_unanswerable():
+    """BUG-027: `evaluate()` folded ambiguous into unanswerable, so a correct
+    admission was scored as a false answer and the published rate was too LOW.
+
+    Deliberately built on a SYNTHETIC corpus rather than the real index: this is a
+    property of the denominator arithmetic, not of the papers, and the PDFs are
+    absent on a clean clone -- a test that needs them would fail here instead of
+    pinning the bug. The existing test pinned `sweep()` only; this pins the function
+    that writes the committed artifact.
+    """
+    from relay.contracts import Chunk
+    from relay.retrieval.bm25 import Retriever
+    from scripts.retrieval_eval import evaluate
+
+    texts = [
+        "The Transformer uses eight attention heads in the base configuration. "
+        "Multi head attention splits the queries keys and values into eight projections.",
+        "Byte pair encoding produces a vocabulary of thirty seven thousand tokens "
+        "shared between the source and the target languages.",
+        "We train with the Adam optimiser using a warmup schedule over the first "
+        "four thousand steps and then decay the learning rate proportionally.",
+        "Dropout is applied to the output of each sublayer at a rate of one tenth. "
+        "Attention dropout is also applied before the softmax over attention weights.",
+        "The model achieves twenty eight point four BLEU on the English to German "
+        "translation task with the big model configuration on the WMT benchmark.",
+        "Scaled dot product attention divides the dot products by the square root of "
+        "the key dimension to keep the gradients stable during training.",
+        "Positional encodings use sine and cosine functions of different frequencies "
+        "so the model can attend by relative positions without recurrence.",
+        "The encoder is a stack of six identical layers each with two sublayers "
+        "multi head attention followed by a feed forward network.",
+        "The decoder inserts a third sublayer that performs multi head attention over "
+        "the encoder output and masks future positions to preserve autoregression.",
+    ]
+    chunks = [Chunk(f"syn-v1:s{i}:c0000", "attention", f"s{i}", i, t)
+              for i, t in enumerate(texts)]
+    r = Retriever(chunks)
+    q_high = "How many attention heads does the Transformer use?"
+    q_low = "zebra xylophone quartz"
+    # Precondition: the phrasing does what the test needs, so a change in BM25
+    # fails here with a clear message rather than silently proving nothing.
+    assert r.search(q_high, k=1)[0].score > 1.0, "q_high must score above the gate"
+    assert r.search(q_low, k=1)[0].score < 1.0, "q_low must score below the gate"
+
+    qs = [
+        {"qid": "A1", "type": "single", "gold": ["syn-v1:s0:c0000"],
+         "question": q_high, "answer": "8"},
+        {"qid": "T1", "type": "ambiguous", "gold": [], "question": q_high,
+         "answer": "ambiguous"},
+        {"qid": "U1", "type": "unanswerable", "gold": [], "question": q_low,
+         "answer": "none"},
+    ]
+    out = evaluate(r, qs, k=4, threshold=1.0)
+    assert out["n_answerable"] == 1, out
+    assert out["n_unanswerable"] == 1, "ambiguous must not be in the U denominator"
+    assert out["n_ambiguous"] == 1, out
+    assert out["ambiguous_admitted"] == 1, "T1 scores high and is correctly admitted"
+    assert out["false_answer"] == 0.0, (
+        "an admitted AMBIGUOUS question is not a false answer, so the rate over the "
+        f"single unanswerable question is 0/1, not 1/2. got {out['false_answer']}")
