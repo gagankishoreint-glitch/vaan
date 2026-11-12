@@ -60,7 +60,11 @@ pipeline:
   top_k: 4
   max_tokens: {rewrite: 80, draft: 400, verify: 120}
   # Gate on the optional LLM verify step (PRD s4). Code checks always run.
+  # Optional LLM self-check (item G). OFF by default: it costs a call per answer and
+  # nothing here has shown it catches what the code checks miss. It can only DOWNGRADE
+  # a code-verified answer, never upgrade one -- see relay/pipeline/selfcheck.py.
   llm_verify:
+    enabled: false
     min_tpm_remaining_frac: null      # set by P6: budget fraction below which LLM verify is skipped
     min_tpd_remaining_frac: null      # set by P6: same rule, daily bucket
 

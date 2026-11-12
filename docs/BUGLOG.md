@@ -965,3 +965,45 @@ steps are item G's neighbourhood and the brief's "corrective RAG".
 
 **Sandbox.** Routing table at L0/L1/L2 for all three steps. UNCALIBRATED; no model was
 called, and `draft_large_at_l0` is UNMEASURED.
+
+## BUG-041 · L6 pipeline · `llm_verify` was configuration with no behaviour
+**Missing.** `pipeline.llm_verify` had two budget thresholds
+(`min_tpm_remaining_frac`, `min_tpd_remaining_frac`) and no `enabled` flag, no prompt,
+and no code that referenced it. A reader would reasonably assume the feature existed
+and could be tuned; it could only be misconfigured.
+
+**Built, off by default.** `relay/pipeline/selfcheck.py`.
+
+**The direction is the design.** `combine(code_ok, check)` is the only combination
+rule, and the check may only **subtract**:
+
+| code check | self-check | result |
+|---|---|---|
+| pass | pass | pass |
+| pass | **fail** | **fail** (downgraded to PassagesOnly) |
+| pass | skipped / no opinion | pass (code stands) |
+| **fail** | pass | **fail** — never promoted |
+| fail | skipped | fail |
+
+An optional component that can *approve* is an optional component that can bypass
+verification, and H1 would then depend on a model call that is not always made. Both
+mutation directions are caught: allowing promotion, and removing the downgrade.
+
+**Strict parsing.** Only an unambiguous `SUPPORTED`/`UNSUPPORTED` counts. "Yes,
+mostly" returns `None`, and `unclear` citations are **not** endorsements — otherwise
+silence would act as approval.
+
+**Null thresholds do not skip.** An unmeasured budget rule must not behave like a
+configured skip, which would disable a feature nobody chose to disable.
+
+**Cost: ESTIMATE ONLY.** Under the stand-in's `len(chars)/4` tokenization, the check
+adds ~83 prompt + ≤16 completion tokens **per citation**, ~+38% per answer against a
+520-token baseline (`runs/standin/selfcheck_cost.json`, UNCALIBRATED). The real cost
+is **unmeasured** — no Groq call was made, and it is not a tokenizer. The more
+important number, *whether it catches anything the code checks miss*, has not been
+measured at all and cannot be from this sandbox.
+
+**Not wired into `Pipeline.answer()`.** The step is implemented and tested, but
+building the per-citation call path requires the `verify` step that item F routed and
+which does not yet exist as a pipeline stage. Deliberately not claimed as working
+end-to-end.
