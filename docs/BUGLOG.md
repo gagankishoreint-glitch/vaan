@@ -665,3 +665,30 @@ header names and the per-day reading (Q-04), whether `retry-after` is always pre
 (Q-11), and what a real day 429 looks like (Q-09). `docs/STANDIN.md` now carries a
 claim-by-claim table separating what the docs say from what has been observed — which,
 for all of it, is nothing.
+
+## BUG-032 · L3 evaluation · `top_score` was stored rounded while `gated_in` used the raw value
+**Cause.** `evaluate()` computed `gated_in = top >= threshold` from the **raw** score
+but stored `"top_score": round(top, 3)`. The artifact was therefore not internally
+consistent. Two committed rows prove it:
+
+```
+M1 @ 600/100: top_score 15.477, threshold 15.477, gated_in False
+A8 @ 900/150: top_score 15.86,  threshold 15.86,  gated_in False
+```
+
+Both are correct arithmetic — the raw score was a hair under and only *rounded* to the
+threshold — but a consumer recomputing the gate from the stored row gets the opposite
+answer. This is the same defect as BUG-029 one layer down: BUG-029 was `sweep()`
+rounding a **threshold**, this is `evaluate()` rounding a **score**. Fixing one did not
+fix the other, which is why the question was worth asking twice.
+
+**Fix.** `top_score` is now the raw float; `top_score_display` carries the rounded form
+for tables.
+
+**Mutation check — and a false first pass.** The first version of the regression test
+used a round threshold (2.5). Restoring the rounding did **not** fail it, because no
+score in that corpus sat in the gap between a value and its 3dp form near 2.5. The
+test now asserts the corpus even *has* such a gap and places the threshold strictly
+inside it: `disp0 < threshold <= raw0`. With that, restoring `round(top, 3)` fails
+`test_stored_score_reproduces_the_gate_decision`, and the fix passes. Recorded because
+a mutation check that passes is evidence about the test, not the code.

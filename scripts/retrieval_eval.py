@@ -91,7 +91,15 @@ def evaluate(retriever: Retriever, questions: list[dict], k: int,
         gated_in = top >= threshold
         rows.append({
             "qid": q["qid"], "type": q["type"], "gold": gold, "top": got[:k],
-            "rank": rank, "id_rank": id_rank, "top_score": round(top, 3),
+            "rank": rank, "id_rank": id_rank,
+            # RAW, not rounded. `gated_in` below is computed from `top`, so storing
+            # round(top, 3) made the artifact internally inconsistent: a row could
+            # read `top_score: 15.86, gated_in: false` against a threshold of 15.86,
+            # and any consumer recomputing the gate from the stored value got the
+            # opposite answer (BUG-029). The value a decision used must be the value
+            # recorded; `top_score_display` is the rounded form for tables.
+            "top_score": top,
+            "top_score_display": round(top, 3),
             "gated_in": gated_in, "chars": chars,
         })
     answerable = [r for r in rows if r["gold"]]
