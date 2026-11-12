@@ -1,7 +1,8 @@
 """One failure-path test per new mechanism. No more than that (compressed mode).
 
 Run:
-    python -m pytest -q tests/test_p4_p6.py           -> 48 passed
+    python -m pytest -q tests/test_p4_p6.py           -> 42 passed
+    ...                                            (39 when the PDFs are absent)
     python -m pytest -q tests/test_p4_p6.py -k "reconcile or ratchet"  -> 4 passed
 """
 from __future__ import annotations
@@ -858,3 +859,49 @@ def test_evaluate_counts_ambiguous_separately_from_unanswerable():
     assert out["false_answer"] == 0.0, (
         "an admitted AMBIGUOUS question is not a false answer, so the rate over the "
         f"single unanswerable question is 0/1, not 1/2. got {out['false_answer']}")
+
+
+def test_gate_threshold_has_no_numeric_fallback():
+    """A MEASURED key must not have a default that can silently replace it.
+
+    The old code was `cfg.get("retrieval.gate_threshold", 15.0)` against a committed
+    15.86. Deleting one YAML key would have moved every gate decision to a number
+    nobody measured, with no error anywhere -- the exact failure rule 4 exists to
+    prevent. `require()` turns a missing measured key into a loud ConfigError.
+    """
+    import pytest as _pytest
+    from relay.config import Config, ConfigError
+    from relay.pipeline.pipeline import Pipeline
+
+    raw = {"retrieval": {}, "pipeline": {"top_k": 4},
+           "gateway": {"request_deadline_s": None}}
+    cfg = Config(raw, path="test")
+    with _pytest.raises(ConfigError, match="gate_threshold"):
+        Pipeline(cfg, retriever=None, gateway=None, scope=None)
+
+    # and with it present, the committed value is what is used -- not a default
+    raw["retrieval"]["gate_threshold"] = 15.86
+    p = Pipeline(cfg, retriever=None, gateway=None, scope=None)
+    assert p.threshold == 15.86
+
+
+def test_pipeline_records_which_deadline_it_used():
+    """A null `request_deadline_s` falls to the documented stand-in value; say so."""
+    from relay.config import Config
+    from relay.pipeline.pipeline import Pipeline
+
+    standin_only = Config({"retrieval": {"gate_threshold": 15.86},
+                           "gateway": {"request_deadline_s": None,
+                                       "request_deadline_standin_s": 30.0},
+                           "user": {"patience_s": None}}, "t")
+    p = Pipeline(standin_only, retriever=None, gateway=None, scope=None)
+    assert p.deadline == 30.0
+    assert p.deadline_source == "standin"
+
+    measured = Config({"retrieval": {"gate_threshold": 15.86},
+                       "gateway": {"request_deadline_s": 12.5,
+                                   "request_deadline_standin_s": 30.0},
+                       "user": {"patience_s": None}}, "t")
+    p2 = Pipeline(measured, retriever=None, gateway=None, scope=None)
+    assert p2.deadline == 12.5
+    assert p2.deadline_source == "measured"

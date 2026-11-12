@@ -37,10 +37,13 @@ class StreamTimings:
     usage: Optional[dict] = None
     n_deltas: int = 0
     #: Rate-limit headers as received. The streamed path used to drop these on the
-    #: floor, so streamed attempts -- which is every answer the pipeline sends --
-    #: never reconciled the local bucket with the provider's view at all, and never
-    #: learned the provider's real limits. Non-streaming requests did. That made the
-    #: gateway's rate-limit behaviour depend on which code path happened to be used.
+    #: floor, so streamed attempts never reconciled the local bucket with the
+    #: provider's view and never learned the provider's real limits; non-streaming
+    #: requests did. That made the gateway's rate-limit behaviour depend on which
+    #: code path happened to be used -- a mode-dependent bug, settled only when the
+    #: streamed path was brought to parity. (`pipeline.stream` defaults to false, so
+    #: this was latent rather than universal, and would have bitten the moment
+    #: streaming was enabled.)
     headers: Optional[dict] = None
 
     @property

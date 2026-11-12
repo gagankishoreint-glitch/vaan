@@ -538,3 +538,31 @@ indexes exist.
 
 **Lesson.** Fixing a metric in the function you are reading is not fixing the metric.
 `grep` every producer of the number, and pin the one that writes the artifact.
+
+## BUG-028 · L4 pipeline · a measured threshold had a magic-number fallback
+**Cause.** `pipeline.py` read `cfg.get("retrieval.gate_threshold", 15.0)` while
+`config/relay.yaml` commits **15.86** — a value measured in P3 and justified in D-015.
+Deleting or renaming that one key would have moved every gate decision to 15.0, a
+number nobody measured, with no error and no log line. This is precisely the class
+rule 4 exists to prevent, and it sat in the file that implements the gate.
+
+**Same hazard, second site.** `gateway.retry_credit_floor` was read with a `0.0`
+default against a committed `1.0` ("a cold gateway may retry its first failure").
+With `0.0`, the first failure after a key rename would silently stop being retried.
+
+**Fix.** `cfg.require()` for both. `gateway.request_deadline_s` / `user.patience_s`
+keep documented fallbacks — they are null *by design* until measured — but the
+pipeline now records `deadline_source` (`measured` | `standin`) instead of hiding the
+choice behind `or`, and absent-key handling was made consistent (`cfg.get(k, None)`),
+because `Config.get` raises on a missing key but returns None on a present-and-null one.
+
+**The durable half.** `test_no_numeric_literal_fallback_for_measured_config_keys` is an
+AST walk over `relay/` and `scripts/` that flags any `cfg.get(key, <number>)` where
+`key` is a **non-null number in config that differs from the literal**. Provisional
+keys are listed explicitly in `_PROVISIONAL` with a note, so adding one is a visible
+decision rather than a pattern exemption. Mutation check: restoring
+`cfg.get("retrieval.gate_threshold", 15.0)` makes it fail with
+`('relay/pipeline/pipeline.py', 90, 'retrieval.gate_threshold', 15.0, 15.86)`.
+
+**Lesson.** The lint that existed checked model ids and URLs. The numbers were the
+unwatched half — and a default is a magic number wearing a safety argument.

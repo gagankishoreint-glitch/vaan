@@ -1,11 +1,18 @@
 """P5: minimal rate-limit-aware gateway. Single owner of limit state.
 
 Order per call (PRD s5): deadline -> budget reserve -> breaker -> send -> settle ->
-reconcile. Streamed and buffered responses follow the SAME order: streamed answers are
-every answer the pipeline sends, so a difference between the two paths is a difference
-in how the gateway behaves under load (BUG-025).
+reconcile. Streamed and buffered responses follow the SAME order and the same
+bookkeeping: a difference between the two paths is a difference in how the gateway
+behaves under load, and `pipeline.stream` can be switched on per run (BUG-025).
+This must be correct WHENEVER streaming is on -- `pipeline.stream` currently defaults
+to false, so "streamed" is not "every answer", it is "every answer once the flag is
+set". A path that is only correct in the mode you happen to be running is not
+correct.
 
-    python -m pytest -q tests/test_p4_p6.py                  -> 48 passed
+    python -m pytest -q tests/test_p4_p6.py                  -> 42 passed
+                                                                (39 with the corpus absent:
+                                                                 some cases need the PDFs
+                                                                 and fail loudly without them)
 -> classify -> retry. Every threshold comes from config; a null raises at the point
 of use rather than becoming a number nobody chose.
 
@@ -328,9 +335,9 @@ class Gateway:
                 usage = st.usage or {}
                 attempt.tokens_in = usage.get("prompt_tokens")
                 attempt.tokens_out = usage.get("completion_tokens")
-                # Same reconciliation as the buffered path. Streamed mean *every*
-                # pipeline answer, so skipping it here meant the bucket was only
-                # ever corrected on the probe's non-streamed calls.
+                # Same reconciliation as the buffered path, because a streamed run
+                # must behave like a buffered one. Skipping it meant the bucket was
+                # only ever corrected on the probe's non-streamed calls.
                 attempt.rl_headers_raw = st.headers or {}
                 rl = parse_rl_headers(st.headers or {})
                 attempt.retry_after_s = rl["retry_after_s"]
@@ -467,7 +474,10 @@ class Gateway:
             return None                              # a day limit never retries
         if elapsed >= deadline_s:
             return None
-        floor = self.cfg.get("gateway.retry_credit_floor", 0.0)
+        # No numeric fallback: config commits 1.0 ("a cold gateway may retry its
+        # first failure"), and a 0.0 default here would have silently disabled that
+        # for the first call after any key rename (BUG-028, caught by the lint).
+        floor = self.cfg.require("gateway.retry_credit_floor")
         if self._retry_credit + floor < 1.0:
             return None                              # global retry budget spent
         wait = attempt.retry_after_s if attempt.retry_after_s is not None else 1.0

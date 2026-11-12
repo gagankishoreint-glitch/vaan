@@ -6,6 +6,8 @@ from pathlib import Path
 
 import pytest
 
+from relay.config import ConfigError, load_config
+
 ROOT = Path(__file__).resolve().parents[1]
 PKG = ROOT / "relay"
 
@@ -110,3 +112,78 @@ def test_contracts_module_is_a_leaf():
         elif isinstance(node, ast.Import):
             imported |= {a.name for a in node.names}
     assert not any(m.startswith("relay") or m.startswith("httpx") for m in imported), imported
+
+
+#: Config keys whose null is a REAL "not measured yet" (or a provisional stand-in
+#: value), where a non-numeric fallback in code is legitimate and documented.
+_PROVISIONAL = {
+    "gateway.request_deadline_s",       # null until L5; *_standin_s is the fallback
+    "gateway.request_deadline_standin_s",
+    "user.patience_s",                  # null until measured; None = no timer
+    "pipeline.max_tokens.draft",
+    "pipeline.max_tokens.rewrite",
+    "pipeline.top_k",
+    "models.small.rpm",                 # UNVERIFIED docs-table value
+    "retrieval.bm25_k1",
+    "retrieval.bm25_b",
+    "standin.seed",
+}
+
+#: Not config keys at all -- `dict.get` on parsed JSON. Listed so the rule stays
+#: about CONFIG and does not turn into a ban on defensive coding.
+_NOT_CONFIG = {"size", "t_mono", "fail_threshold", "open_s"}
+
+
+def test_no_numeric_literal_fallback_for_measured_config_keys():
+    """A MEASURED key must not carry a numeric literal default (BUG-028).
+
+    `retrieval.gate_threshold` is committed as 15.86 *because it was measured*. The
+    pipeline read it as `cfg.get(..., 15.0)`, so deleting or renaming the key would
+    have moved every gate decision to 15.0 -- a number nobody measured -- silently.
+
+    The rule is narrowed to keys whose value in `config/relay.yaml` is a NON-NULL
+    number. Those are the ones a default can disagree with. A key that is itself
+    null (or absent) is provisional by definition, and a documented default there is
+    the intended design, not a hazard. An AST walk, so a call split across lines is
+    still caught.
+    """
+    cfg = load_config(ROOT / "config" / "relay.yaml")
+
+    def configured(dotted: str):
+        try:
+            return cfg.get(dotted)
+        except ConfigError:
+            return "absent"
+
+    offenders = []
+    for path in py_files(PKG) + py_files(ROOT / "scripts"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            fn = node.func
+            if not (isinstance(fn, ast.Attribute) and fn.attr == "get"):
+                continue
+            if not node.args or not isinstance(node.args[0], ast.Constant):
+                continue
+            key = node.args[0].value
+            if not isinstance(key, str) or key in _PROVISIONAL or key in _NOT_CONFIG:
+                continue
+            default = node.args[1] if len(node.args) > 1 else None
+            for kw in node.keywords:
+                if kw.arg == "default":
+                    default = kw.value
+            if not (isinstance(default, ast.Constant)
+                    and isinstance(default.value, (int, float))
+                    and not isinstance(default.value, bool)):
+                continue
+            # only a hazard when config actually holds a different number
+            v = configured(key)
+            if isinstance(v, (int, float)) and not isinstance(v, bool) \
+                    and v != default.value:
+                offenders.append((str(path.relative_to(ROOT)), node.lineno, key,
+                                  default.value, v))
+    assert offenders == [], (
+        "measured config key(s) carry a numeric literal fallback that disagrees "
+        f"with config/relay.yaml; use cfg.require(). (path, line, key, default, "
+        f"configured) = {offenders}")

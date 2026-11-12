@@ -183,8 +183,10 @@ only correction was `reconcile`, which moved the bucket **downward only**
    was hitting. The test that now catches this fails with
    `local TPM budget exhausted: 7700+350 > 8000` after the provider has repeatedly said
    the bucket is full.
-2. The streamed path — which is **every answer the pipeline sends** — never reconciled
-   at all. `consume()` discarded the response headers, so the bucket was learned and
+2. The streamed path never reconciled at all. (`pipeline.stream` defaults to **false**,
+   so this was *latent* rather than universal: the pipeline sends buffered answers unless
+   the flag is set. The original wording here said streamed was "every answer the
+   pipeline sends", which was wrong — see the correction at the end of this entry.) `consume()` discarded the response headers, so the bucket was learned and
    corrected only on the probe's non-streamed calls. The rate-limit behaviour therefore
    depended on which code path happened to be used.
 
@@ -204,7 +206,32 @@ move and the local bucket will not move either. If it does, both move together.
 units mismatch); moving only downward; trusting the header across a window rollover;
 and any second, independent refund calculation layered on top of the header.
 
+**Correction (2026-11-11).** This entry twice asserted that streamed responses were
+"every answer the pipeline sends". They are not: `config/relay.yaml` sets
+`pipeline.stream: false`, and `scripts/run_queries.py` only streams with `--stream`.
+The BUG-025 fix stands — a streamed run must reconcile exactly like a buffered one,
+or the gateway's behaviour depends on which mode you happen to be running — but the
+justification was overstated. Correct statement: **the streamed path must behave
+identically to the buffered path whenever streaming is enabled.**
+
 **Re-open if.** The A/B shows the header is not refreshed per response — then
 reconciliation must be rate-limited to the reset interval rather than per call.
 **Run it.** `python -m pytest -q tests/test_p4_p6.py -k "reconcile or ratchet"` →
 `2 passed`.
+
+### D-017 · 2026-11-11 · P6 · A measured value has no default
+**Decision.** Any config key whose committed value is a measured number is read with
+`cfg.require()`. A fallback is allowed only for keys that are null *by design* until
+measured, and those are listed in one place in `tests/test_lint_rules.py`.
+
+**Why.** `retrieval.gate_threshold` was read as `cfg.get(..., 15.0)` against a committed
+15.86, and `gateway.retry_credit_floor` as `0.0` against 1.0 (BUG-028). A default does
+not merely risk being wrong; it converts a configuration error into a silent behaviour
+change, which is the one outcome rule 4 cannot tolerate.
+
+**Rules out.** `cfg.get(measured_key, <number>)` anywhere, and the argument that a
+default is "just a safety net" — a net that catches a renamed key and replaces it with
+a number nobody measured is not safety.
+
+**Re-open if.** A measured key genuinely needs to run before its measurement exists —
+then it is null in config and belongs in `_PROVISIONAL` with the reason written down.

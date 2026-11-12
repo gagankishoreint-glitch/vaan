@@ -83,13 +83,26 @@ class Pipeline:
         self.gw = gateway
         self.scope = scope
         self.k = cfg.get("pipeline.top_k", 4)
-        self.threshold = cfg.get("retrieval.gate_threshold", 15.0)
-        self.deadline = (cfg.get("gateway.request_deadline_s")
-                         or cfg.get("gateway.request_deadline_standin_s", 30.0))
+        # MEASURED, so it must not have a fallback. The old `cfg.get(..., 15.0)` sat
+        # one keystroke away from silently substituting 15.0 for the committed 15.86
+        # -- a threshold nobody measured, in a project whose rule 4 is "no magic
+        # numbers". A missing key is a configuration error and has to say so.
+        self.threshold = cfg.require("retrieval.gate_threshold")
+        # Two keys on purpose: the stand-in deadline is provisional (a documented
+        # stand-in value), the real one is measured and still null until P1/L5.
+        # Preferring the measured key when present keeps that ordering explicit
+        # instead of hiding it behind `or`.
+        measured = cfg.get("gateway.request_deadline_s", None)
+        self.deadline_source = ("measured" if measured is not None else "standin")
+        self.deadline = (measured if measured is not None
+                         else cfg.get("gateway.request_deadline_standin_s", 30.0))
         # H4: how long a user waits before leaving. PASSED IN, never guessed --
         # expiry here cancels the in-flight call and stops token spend.
-        self.patience_s = patience_s if patience_s is not None else cfg.get(
-            "user.patience_s")
+        # `None` here means "no abandonment timer", which is the correct behaviour
+        # before the value is measured. Defaulting the KEY to None (rather than
+        # omitting it) keeps an absent key distinguishable from a null one.
+        self.patience_s = (patience_s if patience_s is not None
+                           else cfg.get("user.patience_s", None))
         #: Stream the draft so model_ttft is observable. Off by default: the
         #: pipeline parses the whole draft before verifying, so streaming the
         #: draft to itself buys no user-visible latency yet -- it buys the
