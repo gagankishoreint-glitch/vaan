@@ -1007,3 +1007,58 @@ measured at all and cannot be from this sandbox.
 building the per-citation call path requires the `verify` step that item F routed and
 which does not yet exist as a pipeline stage. Deliberately not claimed as working
 end-to-end.
+
+## BUG-041b · L6 gateway · half-open admitted the whole fleet
+*(numbered 041b to stay next to the item-G entry; this is item H's breaker bug)*
+
+**Missing.** `Breaker.state()` returned `"half-open"`, and the gateway gated with
+`if self.breaker.state(t) == "open": raise`. In half-open the string is `"half-open"`,
+not `"open"`, so **nothing was refused** — every queued request was released at the
+instant the breaker's timeout expired.
+
+**Why it matters more than it looks.** The half-open window is the moment the
+provider has just recovered, or has not. A breaker that releases everything there
+does not protect the provider; it schedules the thundering herd for exactly the
+worst instant and then reports `closed` because the first success resets the count.
+The failure is invisible in a log that only records breaker *states*.
+
+**Fix.** `Breaker.try_admit(now) -> (admitted, state)`, and the gateway uses it.
+Half-open admits exactly one probe; every other arrival is refused with its own
+reason (`breaker half-open, probe already in flight`), distinct from `breaker open`.
+A failed probe re-opens immediately even below `fail_threshold`, because the
+threshold counts consecutive failures on the *closed* path — a probe that failed is
+proof the provider is still down, and waiting for four more is wasted traffic.
+
+**Stand-in, real HTTP** (`runs/standin/breaker_cycle.json`, UNCALIBRATED):
+error_rate=1.0 → opened on the 3rd consecutive 500, calls 4–6 refused, zero requests
+sent. Window expires → 6 concurrent arrivals, **exactly 1 admitted**. Probe succeeds
+→ closed, next 3 admitted. `fail_threshold` / `open_s` are **UNMEASURED**.
+
+## BUG-042 · L6 pipeline · a 500 storm is reported to the user as `budget_gone`
+**Found by the item H stand-in, NOT FIXED.**
+
+`DeadlineExceeded` is raised for four unrelated failures:
+
+| raise site | meaning |
+|---|---|
+| `local TPM budget exhausted` / `local RPD budget exhausted` | local budget |
+| `no content before the deadline` | deadline passed |
+| `attempt timed out` | one attempt timed out |
+| **`server_error status=500 ... (gave up after N attempts)`** | **provider was failing** |
+
+`Pipeline.answer()` catches `(DeadlineExceeded, BreakerOpen)` and maps every
+`DeadlineExceeded` to `reason="budget_gone"`. So a run of 500s tells the user
+"the model is busy" and tells the log `budget_gone` — with the budget untouched.
+
+Observed: phase 1 of the breaker run raised
+`DeadlineExceeded: server_error status=500` on a 10 s deadline that never expired,
+after a call that took milliseconds.
+
+**Not fixed here on purpose.** The reason vocabulary is documented in
+`relay/contracts.py` (`budget_gone | verify_failed | breaker_open | queue_full`) and
+is carried on the H1 send path; adding `upstream_error` changes both. Flagged for a
+decision rather than changed quietly.
+
+**Second-order effect:** the breaker opens on these 500s, so a sustained provider
+outage presents as `budget_gone` for the first few requests and `breaker_open` after
+— two different stories for one cause, and neither says "the provider is down".

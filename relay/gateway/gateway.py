@@ -227,11 +227,28 @@ class Budget:
 
 
 class Breaker:
+    """Closed -> open -> half-open -> closed, with a SINGLE probe in half-open.
+
+    The half-open state is the part that is easy to get wrong and expensive to get
+    wrong. `state()` returning "half-open" is only a label: if the caller lets every
+    request through while the breaker is half-open, the breaker does nothing at the
+    moment it matters most -- the provider has just recovered (or not), and the whole
+    fleet hammers it at once. That is the thundering herd the breaker exists to
+    prevent, deferred by one timeout.
+
+    So half-open admits exactly ONE probe (`try_admit`), and:
+      * probe succeeds -> closed, counters reset
+      * probe fails    -> open again for another `open_s`
+    A request that arrives while the probe is in flight is REFUSED, not queued.
+    """
+
     def __init__(self, fail_threshold: int, open_s: float):
         self.fail_threshold = fail_threshold
         self.open_s = open_s
         self.fails = 0
         self.opened_at: Optional[float] = None
+        #: True while a half-open probe is in flight. Only one may be.
+        self._probe_in_flight = False
 
     def state(self, now: float) -> str:
         if self.opened_at is None:
@@ -240,13 +257,36 @@ class Breaker:
             return "half-open"
         return "open"
 
+    def try_admit(self, now: float) -> tuple[bool, str]:
+        """May this request proceed? Returns (admitted, state).
+
+        This is the ONLY correct way to gate on the breaker: `state() == "open"` is
+        not enough, because "half-open" must admit one probe and refuse the rest.
+        """
+        st = self.state(now)
+        if st == "closed":
+            return True, st
+        if st == "open":
+            return False, st
+        # half-open
+        if self._probe_in_flight:
+            return False, st
+        self._probe_in_flight = True
+        return True, st
+
     def record(self, ok: bool, now: float) -> None:
+        was_half_open = self.state(now) == "half-open"
+        self._probe_in_flight = False
         if ok:
             self.fails = 0
             self.opened_at = None
             return
         self.fails += 1
         if self.fails >= self.fail_threshold:
+            self.opened_at = now
+        elif was_half_open:
+            # A failed probe re-opens immediately even below the threshold: the
+            # threshold counts consecutive failures on the CLOSED path, not probes.
             self.opened_at = now
 
 
@@ -401,10 +441,18 @@ class Gateway:
             t_attempt = self.clock.now()
 
             if managed:
-                if self.breaker.state(t_attempt) == "open":
+                # try_admit, not state() == "open": in half-open exactly one probe
+                # is let through and every other request is refused. Checking the
+                # label alone would admit the entire fleet at the moment the
+                # provider is least likely to cope with it.
+                admitted, br_state = self.breaker.try_admit(t_attempt)
+                if not admitted:
+                    if br_state == "open":
+                        raise BreakerOpen(
+                            f"breaker open, reopens in "
+                            f"{self.breaker.opened_at + self.breaker.open_s - t_attempt:.1f}s")
                     raise BreakerOpen(
-                        f"breaker open, reopens in "
-                        f"{self.breaker.opened_at + self.breaker.open_s - t_attempt:.1f}s")
+                        "breaker half-open, probe already in flight")
                 self.budget[model].take(max_tokens, t_attempt)
 
             attempt = Attempt(
