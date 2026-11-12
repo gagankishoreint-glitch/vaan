@@ -44,6 +44,36 @@ report must not present stand-in latency as provider latency.
   path is exercised, with `STANDIN_UNVERIFIABLE_RATE` (default 0.2) producing
   deliberately unverifiable answers so the *failure* path is exercised too
 
+## Bucket model: what is VERIFIED and what is not
+
+`[UNVERIFIED]` — **nothing in this section has been observed against the real
+service.** No real call has been made (no key is used in this work). The stand-in is
+built from the Groq docs table and from inference.
+
+| claim | status | where |
+|---|---|---|
+| header names `x-ratelimit-limit/remaining/reset-{tokens,requests}` | docs table | `_headers()` |
+| `*-requests` describes a **day**, `*-tokens` a **minute** | **UNVERIFIED (Q-04)** | `parse_rl_headers` docstring |
+| `max_tokens` is reserved against TPM up front | **UNVERIFIED (Q-06)** | `complete()` note, item 3 below |
+| every 429 carries `retry-after` | **UNVERIFIED (Q-11)** | `_r429()` always sends it |
+| a day-limit 429 is distinguishable from a minute one | **UNVERIFIED (Q-09)** | `_r429()` `type` field |
+
+**What changed (5e).** `_r429` used to have a single `day` branch that always
+reported `retry-after: 60`, always `type: "requests"`, and always sent
+`reset-tokens` computed from the **minute** bucket — so a per-day exhaustion told the
+client to retry in under a minute. It now takes `minute | day_tokens | day_requests`
+and reports the refusing bucket's own reset. `[VERIFIED in the stand-in]` by
+`tests/test_standin_buckets.py` and by `runs/standin/bucket_429.json`
+(UNCALIBRATED).
+
+**Stand-in-only headers.** The stand-in enforces a day *token* bucket that Groq is
+not believed to expose. Its counters are emitted under `x-standin-*` names so they
+can never be mistaken for a provider header; a test asserts every `*day*` header
+carries that prefix. The gateway ignores unknown headers, so this costs nothing.
+
+**Still absent.** The stand-in does not model a per-request cost that differs from
+`max_tokens`, so it cannot settle Q-06 on its own even when the probe runs.
+
 ## Documented differences from the real service
 
 1. Model IDs are whatever `config/relay.yaml` says; no real model list.

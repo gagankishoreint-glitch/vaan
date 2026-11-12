@@ -638,3 +638,30 @@ truncated one.
 **Mutation check.** Reverting to a parser that drops `raw` and treats garbage as a
 quiet stream fails 2 of the 19 tolerance tests. **Sandbox:** the stand-in run
 (8 lines, 0 malformed, `saw_done`) ran here and is filed UNCALIBRATED.
+
+## BUG-031 · stand-in · a day-limit 429 advertised a retry 60 s away
+**Cause.** `_r429` had one `day` branch shared by the daily-request and daily-token
+buckets. It hard-coded `retry-after: 60`, always set `type: "requests"`, and always
+emitted `x-ratelimit-reset-tokens` computed from the **minute** bucket — so exhausting
+the *daily* budget told the client to come back in under a minute. The minute and day
+buckets reset 1440 minutes apart, and the header said the wrong one.
+
+**Why it mattered.** The gateway's minute-vs-day classification reads exactly these
+fields. A test of "does a day 429 stop the caller retrying?" was really testing the
+stand-in's arithmetic, and would have passed or failed for reasons unrelated to the
+gateway. Q-09 ("what does a day 429 look like?") could not be approached against an
+instrument that answers the question wrongly by construction.
+
+**Fix.** `_r429(kind)` takes `minute | day_tokens | day_requests` and reports the
+refusing bucket's own reset. The daily-token bucket, which Groq is not believed to
+expose, publishes its counters as `x-standin-*` so they cannot be mistaken for
+provider headers.
+
+**Mutation check.** Restoring `wait = 60.0` for `day_tokens` fails
+`test_day_token_429_does_not_advertise_a_minute_reset`.
+
+**CALIBRATION.** Everything about the *real* service in this area remains UNVERIFIED:
+header names and the per-day reading (Q-04), whether `retry-after` is always present
+(Q-11), and what a real day 429 looks like (Q-09). `docs/STANDIN.md` now carries a
+claim-by-claim table separating what the docs say from what has been observed — which,
+for all of it, is nothing.

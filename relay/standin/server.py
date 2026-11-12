@@ -130,6 +130,19 @@ class StandIn:
         self._rng = random.Random(self.seed)
 
     def _headers(self, now: float) -> dict[str, str]:
+        """Rate-limit headers in the shape the gateway parses.
+
+        CALIBRATION: the header NAMES and the *-requests = per-day reading are from
+        the Groq docs table, not from an observed response -- no real call has been
+        made (Q-04). The gateway tolerates the other reading; see
+        docs/STANDIN.md "Bucket model".
+
+        One deliberate correction to the previous version: `reset-tokens` used to be
+        computed from the TPM bucket even when the 429 was a DAY limit, so a day
+        exhaustion advertised "retry in 40s". `_headers` now reports each bucket's own
+        reset, and `_r429` says which limit was hit (Q-09: what a day 429 looks like
+        is still UNVERIFIED).
+        """
         return {
             "x-ratelimit-limit-tokens": str(self.tpm),
             "x-ratelimit-remaining-tokens": str(max(0, self.tpm - self.tpm_bucket.used)),
@@ -137,6 +150,13 @@ class StandIn:
             "x-ratelimit-limit-requests": str(self.rpd),
             "x-ratelimit-remaining-requests": str(max(0, self.rpd - self.req_bucket.used)),
             "x-ratelimit-reset-requests": f"{max(0.0, self.req_bucket.reset_at - now):.0f}s",
+            # Day TOKEN bucket. Not a Groq header name: Groq is believed to expose only
+            # TPM and RPD. Emitted because the stand-in ENFORCES a day-token limit and
+            # a client that cannot see which bucket it exhausted cannot be tested
+            # against it. Prefixed `x-standin-` so it can never be mistaken for real.
+            "x-standin-limit-day-tokens": str(self.tpd),
+            "x-standin-remaining-day-tokens": str(max(0, self.tpd - self.day_bucket.used)),
+            "x-standin-reset-day-tokens": f"{max(0.0, self.day_bucket.reset_at - now):.0f}s",
         }
 
     async def complete(self, body: dict, raw: Request) -> Any:
@@ -152,10 +172,10 @@ class StandIn:
             return self._r429(now, "minute", "hostile p429_rate")
         ok, wait, _ = self.req_bucket.take(1, now)
         if not ok:
-            return self._r429(now, "day", "request-per-day exhausted")
+            return self._r429(now, "day_requests", "request-per-day exhausted")
         ok, wait, _ = self.day_bucket.take(max_tokens or 1, now)
         if not ok:
-            return self._r429(now, "day", "tokens-per-day exhausted")
+            return self._r429(now, "day_tokens", "tokens-per-day exhausted")
         # NOTE: max_tokens is taken up front, which mirrors the UNVERIFIED hypothesis
         # that TPM is reserved rather than charged on usage (Q-06). Config switch it.
         ok, wait, _ = self.tpm_bucket.take(max_tokens or 1, now)
@@ -194,12 +214,29 @@ class StandIn:
         }, headers=self._headers(time.monotonic()))
 
     def _r429(self, now: float, kind: str, why: str) -> JSONResponse:
-        wait = (self.tpm_bucket.reset_at - now) if kind == "minute" else 60.0
+        """A 429 that describes the bucket that actually refused.
+
+        `kind` is minute | day_tokens | day_requests. The old version had one `day`
+        case that always reported a 60 s wait and `type: requests`, and always sent
+        `reset-tokens` from the minute bucket -- so a caller could not tell which
+        limit it had hit, and `retry-after` was a guess. The gateway's
+        minute-vs-day classification depends on exactly this distinction (Q-09).
+        """
+        if kind == "minute":
+            wait = max(0.0, self.tpm_bucket.reset_at - now)
+            typ, hdrs = "tokens", {"x-ratelimit-reset-tokens":
+                                   f"{wait:.2f}s"}
+        elif kind == "day_tokens":
+            wait = max(0.0, self.day_bucket.reset_at - now)
+            typ, hdrs = "tokens", {"x-standin-reset-day-tokens": f"{wait:.0f}s"}
+        else:                                            # day_requests
+            wait = max(0.0, self.req_bucket.reset_at - now)
+            typ, hdrs = "requests", {"x-ratelimit-reset-requests": f"{wait:.0f}s"}
         body = {"error": {"message": f"Rate limit reached: {why}",
-                          "type": "tokens" if kind == "minute" else "requests",
+                          "type": typ,
                           "code": "rate_limit_exceeded"}}
         return JSONResponse(body, status_code=429,
-                            headers={**self._headers(now),
+                            headers={**self._headers(now), **hdrs,
                                      "retry-after": f"{max(1, int(wait))}"})
 
     async def _stream(self, content: str, usage: dict, latency: float):
