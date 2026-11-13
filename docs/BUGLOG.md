@@ -1034,31 +1034,89 @@ error_rate=1.0 → opened on the 3rd consecutive 500, calls 4–6 refused, zero 
 sent. Window expires → 6 concurrent arrivals, **exactly 1 admitted**. Probe succeeds
 → closed, next 3 admitted. `fail_threshold` / `open_s` are **UNMEASURED**.
 
-## BUG-042 · L6 pipeline · a 500 storm is reported to the user as `budget_gone`
-**Found by the item H stand-in, NOT FIXED.**
-
-`DeadlineExceeded` is raised for four unrelated failures:
-
-| raise site | meaning |
-|---|---|
-| `local TPM budget exhausted` / `local RPD budget exhausted` | local budget |
-| `no content before the deadline` | deadline passed |
-| `attempt timed out` | one attempt timed out |
-| **`server_error status=500 ... (gave up after N attempts)`** | **provider was failing** |
-
-`Pipeline.answer()` catches `(DeadlineExceeded, BreakerOpen)` and maps every
-`DeadlineExceeded` to `reason="budget_gone"`. So a run of 500s tells the user
-"the model is busy" and tells the log `budget_gone` — with the budget untouched.
+## BUG-042 · L6 pipeline · a 500 storm was reported to the user as `budget_gone` — FIXED
+**Found by the item H stand-in.** `DeadlineExceeded` covered four unrelated failures
+and `Pipeline.answer()` mapped every one of them to `reason="budget_gone"`, with the
+message "The model is busy; here are the passages that would answer this."
 
 Observed: phase 1 of the breaker run raised
-`DeadlineExceeded: server_error status=500` on a 10 s deadline that never expired,
-after a call that took milliseconds.
+`DeadlineExceeded: server_error status=500` on a **10 s deadline that never expired**,
+after a call that took milliseconds. The budget was untouched.
 
-**Not fixed here on purpose.** The reason vocabulary is documented in
-`relay/contracts.py` (`budget_gone | verify_failed | breaker_open | queue_full`) and
-is carried on the H1 send path; adding `upstream_error` changes both. Flagged for a
-decision rather than changed quietly.
+**Fix: the exception is split by CAUSE, not by name.** `DeadlineExceeded` now means
+one thing — a budget was actually refused. Everything that spent tokens and did not
+get an answer is `UpstreamError`.
 
-**Second-order effect:** the breaker opens on these 500s, so a sustained provider
-outage presents as `budget_gone` for the first few requests and `breaker_open` after
-— two different stories for one cause, and neither says "the provider is down".
+### The mapping table
+
+| cause | exception | `PassagesOnly.reason` |
+|---|---|---|
+| local TPM reservation refused | `DeadlineExceeded` | `budget_gone` |
+| local RPD reservation refused | `DeadlineExceeded` | `budget_gone` |
+| provider day limit (429, never retried) | `DeadlineExceeded` | `budget_gone` |
+| retries exhausted on 5xx | `UpstreamError` | `upstream_error` |
+| minute-limit 429, retries exhausted | `UpstreamError` | `upstream_error` |
+| per-attempt timeout, not retryable | `UpstreamError` | `upstream_error` |
+| outer deadline, no first content | `UpstreamError` | `upstream_error` |
+| `StreamProtocolError`, retries exhausted | `StreamProtocolError` (pinned, 5c) | `upstream_error` |
+| breaker refused the call | `BreakerOpen` | `breaker_open` |
+| queue refused admission | `Admission` diagnosis | `queue_full` (via `contract_reason`) |
+| our own checks rejected an answer | — | `verify_failed` |
+
+**The minute-limit case is the one worth arguing about.** A 429 we gave up retrying
+is a shortage of *attempts*, not of budget, and the request did spend tokens. Calling
+it `budget_gone` would tell an operator to raise a limit that was not the limit.
+
+### The exact user-facing strings
+
+| reason | text |
+|---|---|
+| `budget_gone` | "I could not spend the budget to answer; here are the passages that would." |
+| `upstream_error` | "The model did not answer this time; here are the passages that would." |
+| `breaker_open` | "The model is unavailable right now; here are the passages that would answer this." |
+
+Every one costs **0 tokens** and still returns the passages. The two non-budget
+strings are asserted to contain neither "budget" nor "token" — a test, not a review.
+The old single sentence ("the model is busy") was accurate for none of the three.
+
+### `send_reply` is still the single exit
+
+Unchanged: `VerifiedAnswer` still cannot be built without `mint_verified`, and
+`send_reply` still asserts `is_reply()`. This change only widens what the caller
+catches **before** calling it — nothing bypasses H1.
+
+### The permitted set, in both places (D-006)
+
+`PASSAGES_ONLY_REASONS` lives in `relay/contracts.py`, and `PassagesOnly.__post_init__`
+**raises** on a reason outside it. `scripts/check_events.py` and `scripts/analyze.py`
+each keep a **re-typed** copy rather than importing, because D-006 exists so a bug in
+the library cannot hide from the checker; the price of duplication is drift, so
+`tests/test_reasons.py::test_the_two_checkers_retype_the_same_set` asserts all three
+agree. Drift now fails a test instead of passing both files.
+
+**Adding the validation found a sixth reason already in use.**
+`would_wait_past_deadline` was being passed to `PassagesOnly` from the queue. It is
+an **admission diagnosis**, not a contract reason, and adding it to the contract
+would have grown the set by a distinction only the log needs. `queue.contract_reason()`
+now maps both diagnoses to `queue_full`, and raises on an unknown one.
+
+### Never cached
+
+`NO` `PassagesOnly` is cacheable, under any reason — `CACHEABLE_TERMINALS` is an
+allowlist (`answered`, `no_evidence`). A reason **blacklist** (`!= "budget_gone"`)
+would have cached `upstream_error` the day it was introduced. Stated in the module
+docstring because the next reason will be added by someone reading that code.
+
+### Mutation checks — both directions
+
+| mutation | expected | result |
+|---|---|---|
+| 5xx raises `DeadlineExceeded` again (old mapping) | the 500-storm test fails | **FAILED** `test_a_500_storm_yields_upstream_error_not_budget_gone` |
+| day-limit 429 raises `UpstreamError` (over-correction) | the day-limit test fails | **FAILED** `test_a_day_limit_429_still_yields_budget_gone` |
+| pipeline maps `UpstreamError` → `budget_gone` | the exact-mapping test fails | **FAILED** `test_the_pipeline_mapping_is_exact` |
+
+The third mutation **passed on the first attempt**: the original test only asserted
+the reason was *a member of the set*, and `budget_gone` is a member. The test was
+weakened by its own generality. It now pins each cause to its reason. Recorded
+because a mutation check that passes is evidence about the test.
+

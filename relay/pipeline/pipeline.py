@@ -13,7 +13,10 @@ from typing import Optional
 
 from relay.config import Config
 from relay.contracts import Citation, NoEvidence, PassagesOnly, Reply, is_reply
-from relay.gateway.gateway import DeadlineExceeded, BreakerOpen, Gateway
+from relay.gateway.gateway import (
+    BreakerOpen, DeadlineExceeded, Gateway, UpstreamError,
+)
+from relay.gateway.stream import StreamProtocolError
 from relay.pipeline.verify import check_citations, check_numbers_present, mint
 
 from relay.pipeline.cascade import CascadeConfig, model_for, routing_event_fields
@@ -29,6 +32,46 @@ Passages:
 
 Question: {question}
 """
+
+
+#: The reason sent for each cause. `budget_gone` is ONLY a refused budget.
+REASON_NAMES: dict[type, str] = {
+    DeadlineExceeded: "budget_gone",    # a budget was actually refused
+    UpstreamError: "upstream_error",    # the provider failed / the deadline passed
+    # 5c pinned this to PROPAGATE as StreamProtocolError rather than be wrapped.
+    # Left as it is -- but the pipeline must still catch it, or the request ends
+    # with NO terminal event at all, which is the one outcome this project forbids.
+    # Same cause, same reason: unusable bytes from upstream.
+    StreamProtocolError: "upstream_error",
+    BreakerOpen: "breaker_open",        # we refused to call at all
+}
+
+#: What the user is told. It must never contradict the reason: an upstream failure
+#: that reads as "out of budget" is the defect this table exists to prevent.
+REASON_MESSAGES: dict[type, str] = {
+    DeadlineExceeded: (
+        "I could not spend the budget to answer; here are the passages that would."),
+    UpstreamError: (
+        "The model did not answer this time; here are the passages that would."),
+    StreamProtocolError: (
+        "The model did not answer this time; here are the passages that would."),
+    BreakerOpen: (
+        "The model is unavailable right now; here are the passages that would "
+        "answer this."),
+}
+
+
+def reason_for(exc: BaseException) -> tuple[str, str]:
+    """(reason, message) for an exception that ended the request.
+
+    Matched by `isinstance`, not by `type(e)`: a subclass (or a test double) must
+    not raise KeyError from the error path, which would turn a handled failure into
+    an unhandled one.
+    """
+    for cls in (DeadlineExceeded, StreamProtocolError, UpstreamError, BreakerOpen):
+        if isinstance(exc, cls):
+            return REASON_NAMES[cls], REASON_MESSAGES[cls]
+    raise TypeError(f"no reason mapping for {type(exc).__name__}")
 
 
 @dataclass
@@ -217,11 +260,20 @@ class Pipeline:
             self.scope.abandon(f"patience_{self.patience_s}s")
             return Outcome_(send_reply(None, abandoned=True), "abandoned",
                             f"patience_{self.patience_s}s")
-        except (DeadlineExceeded, BreakerOpen) as e:
+        except (DeadlineExceeded, UpstreamError, StreamProtocolError,
+                BreakerOpen) as e:
+            # The reason names the CAUSE, and the text must not contradict it.
+            # Previously every DeadlineExceeded became `budget_gone` -- so a 500
+            # storm told the user "the model is busy" and told the log that a budget
+            # was spent, while the budget was untouched (BUG-042).
+            #
+            # Each of these costs 0 tokens and still returns the passages; only the
+            # sentence differs. Both live in module-level tables so a test can
+            # assert that no non-budget sentence mentions budget or tokens.
+            reason, message = reason_for(e)
             return Outcome_(send_reply(PassagesOnly(
-                "The model is busy; here are the passages that would answer this.",
-                tuple(h.chunk for h in hits), "budget_gone" if isinstance(
-                    e, DeadlineExceeded) else "breaker_open")), "passages_only", str(e))
+                message, tuple(h.chunk for h in hits), reason)),
+                "passages_only", str(e))
 
         text = (body.get("choices") or [{}])[0].get("message", {}).get("content", "")
         if "NOT_FOUND" in text:

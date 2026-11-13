@@ -43,9 +43,39 @@ class Admission:
     """The result of asking to be let in."""
 
     admitted: bool
-    reason: str = ""          # "" | "queue_full" | "would_wait_past_deadline"
+    #: A DIAGNOSIS, finer than the contract reason. `""` when admitted;
+    #: `queue_full` or `would_wait_past_deadline` when shed. It stays finer in the
+    #: log because the two are different diagnoses -- one means "come back later",
+    #: the other means "this request would have missed its deadline anyway" -- but
+    #: both map to the single contract reason `queue_full` via `contract_reason()`.
+    #: The contract vocabulary is deliberately smaller than the diagnostic one: a
+    #: user cannot act on the difference, and `PassagesOnly.reason` is a closed set.
+    reason: str = ""
     expected_wait_s: float = 0.0
     queue_wait_s: float = 0.0     # actual wait, filled in once admitted
+
+
+#: The ONLY mapping from an admission diagnosis to a contract reason. A caller that
+#: builds `PassagesOnly` from `Admission.reason` directly would crash on
+#: `would_wait_past_deadline`, because it is not a member of the contract set.
+CONTRACT_REASON: dict[str, str] = {
+    "queue_full": "queue_full",
+    "would_wait_past_deadline": "queue_full",
+}
+
+
+def contract_reason(admission_reason: str) -> str:
+    """Map an admission diagnosis to `PassagesOnly.reason`.
+
+    Raises on an unknown diagnosis rather than passing it through: a new diagnosis
+    that reaches the contract unchecked is how the set silently grows.
+    """
+    try:
+        return CONTRACT_REASON[admission_reason]
+    except KeyError:
+        raise ValueError(
+            f"admission reason={admission_reason!r} has no contract reason; "
+            f"add it to CONTRACT_REASON deliberately") from None
 
 
 @dataclass

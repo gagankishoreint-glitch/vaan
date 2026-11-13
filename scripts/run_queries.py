@@ -81,9 +81,14 @@ async def main_async(a) -> int:
                              total_elapsed_s=round(total, 4), waiting_s=0.0,
                              working_s=round(total, 4), retrying_s=0.0)
             else:
+                # The terminal carries the reason so check_events can validate it
+                # (D-006, I5). Emitting it only for passages_only: the other reply
+                # types have no reason, and a null there would be noise.
+                extra = ({"reason": out.reason}
+                         if isinstance(reply, PassagesOnly) else {})
                 scope.finish(out.terminal, reply_type=reply_type_of(reply),
                              total_elapsed_s=round(total, 4), waiting_s=0.0,
-                             working_s=round(total, 4), retrying_s=0.0)
+                             working_s=round(total, 4), retrying_s=0.0, **extra)
             gold = set(q["gold"])
             cited = {c.chunk_id for c in reply.citations} if isinstance(
                 reply, VerifiedAnswer) else set()

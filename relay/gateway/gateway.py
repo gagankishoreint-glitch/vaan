@@ -40,7 +40,27 @@ from relay.ratelimit_headers import parse_rl_headers
 
 
 class DeadlineExceeded(Exception):
-    pass
+    """A BUDGET was actually refused. Nothing was generated.
+
+    Split out from the old catch-all because "our budget is gone" and "the provider
+    failed" led to the same user-facing reason (`budget_gone`) -- a 500 storm was
+    reported as a budget problem with the budget untouched (BUG-042).
+
+    Raised ONLY for a refused local reservation or a provider day limit.
+    """
+
+
+class UpstreamError(Exception):
+    """The provider failed, or we ran out of time waiting for it.
+
+    Covers: retries exhausted on 5xx, a per-attempt timeout that could not be
+    retried, a connection error, a StreamProtocolError, and the outer deadline.
+    Distinct from DeadlineExceeded: we SPENT here, and it did not work.
+
+    Not called `ProviderError` because the outer deadline is our clock, not their
+    fault; both are "the request did not get an answer", which is what the user is
+    told and what the reason records.
+    """
 
 
 class BreakerOpen(Exception):
@@ -482,7 +502,9 @@ class Gateway:
                     scope.attempt_end(attempt)
                     if managed:
                         self.breaker.record(False, attempt.t_end)
-                    raise DeadlineExceeded("no content before the deadline") from None
+                    # The OUTER deadline ran out waiting for first token. That is
+                    # time we spent upstream, not a budget refusal.
+                    raise UpstreamError("no content before the deadline") from None
                 except StreamProtocolError as e:
                     # A PROTOCOL fault, not a timeout: the provider (or a proxy)
                     # sent something unintelligible. Treated as a retryable server
@@ -590,7 +612,7 @@ class Gateway:
                     decision = self._next_delay(attempt, t_start, deadline_s,
                                                 attempt_no, max_attempts, managed)
                     if decision is None:
-                        raise DeadlineExceeded(last_error) from None
+                        raise UpstreamError(last_error) from None
                     wait, why = decision
                     scope.emit("retry.sleep", attempt_id=attempt.attempt_id,
                                sleep_s=round(wait, 3), policy=self.policy, why=why)
@@ -600,7 +622,7 @@ class Gateway:
                 else:
                     if managed:
                         self.breaker.record(False, attempt.t_end)
-                    raise DeadlineExceeded("attempt timed out") from None
+                    raise UpstreamError("deadline passed") from None
             except asyncio.CancelledError:
                 # H4: the caller abandoned this request. Cancelling the await above
                 # cancels the HTTP request itself, so the provider stops generating
@@ -657,14 +679,20 @@ class Gateway:
             decision = self._next_delay(attempt, t_start, deadline_s,
                                         attempt_no, max_attempts, managed)
             if decision is None:
-                raise DeadlineExceeded(last_error)
+                # A 429 that cannot be retried is still a BUDGET problem only when
+                # it is the provider's DAY limit (RATE_LIMITED_DAY, never retried).
+                # A minute limit we gave up on is a shortage of attempts, not of
+                # budget, and the request did spend tokens -- upstream_error.
+                if attempt.outcome is Outcome.RATE_LIMITED_DAY:
+                    raise DeadlineExceeded(last_error)
+                raise UpstreamError(last_error)
             wait, why = decision
             scope.emit("retry.sleep", attempt_id=attempt.attempt_id,
                        sleep_s=round(wait, 3), policy=self.policy, why=why)
             if wait:
                 await self.clock.sleep(wait)   # slot released while sleeping
 
-        raise DeadlineExceeded(f"{last_error} (gave up after {max_attempts} attempts)")
+        raise UpstreamError(f"{last_error} (gave up after {max_attempts} attempts)")
 
     async def _streamed_call(self, payload: dict, t_attempt: float,
                              deadline_s: float, t_start: float,

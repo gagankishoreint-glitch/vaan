@@ -39,10 +39,20 @@ def _chunk(i: int = 0) -> Chunk:
     return Chunk(f"t-v1:s{i}:c0000", "d", f"s{i}", i, "passage text " * 5)
 
 
+from relay.pipeline.queue import contract_reason as contract_reason_of
+
+
 def _shed_terminal(reason: str, passages):
-    """The single place a shed request becomes a reply -- mirrors the pipeline."""
+    """The single place a shed request becomes a reply -- mirrors the pipeline.
+
+    Uses `contract_reason`, because `Admission.reason` is a diagnosis and
+    `PassagesOnly.reason` is a closed set: `would_wait_past_deadline` is NOT a
+    member, and passing it through raises (BUG-042's vocabulary change).
+    """
+    from relay.pipeline.queue import contract_reason
     return (PassagesOnly("The system is busy; here are the closest passages.",
-                         tuple(passages), reason), "passages_only", reason)
+                         tuple(passages), contract_reason(reason)),
+            "passages_only", reason)
 
 
 def test_overfill_sheds_every_extra_request_with_a_terminal():
@@ -106,7 +116,7 @@ def test_overfill_sheds_every_extra_request_with_a_terminal():
         assert reason in ("queue_full", "would_wait_past_deadline"), reason
         assert isinstance(reply, PassagesOnly)
         assert reply.passages, "a shed request must still get its passages"
-        assert reply.reason == reason
+        assert reply.reason == contract_reason_of(reason)
 
 
 def test_shed_reply_carries_the_reason_not_a_generic_busy():
@@ -114,7 +124,7 @@ def test_shed_reply_carries_the_reason_not_a_generic_busy():
     for reason in ("queue_full", "would_wait_past_deadline"):
         reply, terminal, r = _shed_terminal(reason, [_chunk()])
         assert r == reason
-        assert reply.reason == reason
+        assert reply.reason == contract_reason_of(reason)
         assert terminal == "passages_only"
 
 

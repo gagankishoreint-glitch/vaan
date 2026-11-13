@@ -10,12 +10,16 @@ CACHE
   answer produced by a different index, or by a prompt that no longer exists, and
   nothing downstream could tell.
 
-  Only `VerifiedAnswer` and `NoEvidence` are cached. `PassagesOnly(budget_gone)` is
-  explicitly NOT: it is a statement about *our* state at that moment (`budget_gone`,
-  `breaker_open`), and caching it would turn a transient shortage into a durable
-  refusal that outlives the shortage. `PassagesOnly` for other reasons is also not
-  cached, because an unverified answer is the one thing this project must not
-  repeat as if it were verified.
+  Only `VerifiedAnswer` and `NoEvidence` are cached. NO `PassagesOnly` is cached,
+  under ANY reason. Each reason is a statement about our state at that moment:
+  `budget_gone` and `breaker_open` are transient shortages, and `upstream_error` is
+  the provider failing -- caching any of them turns a temporary condition into a
+  durable refusal that outlives it. And an unverified answer is the one thing this
+  project must not repeat as if it were verified.
+
+  Enforced by `CACHEABLE_TERMINALS` below rather than by a reason blacklist: a
+  blacklist would be correct only until someone adds a reason, and `upstream_error`
+  (added in BUG-042) would have been cached by a `!= "budget_gone"` test.
 
 COALESCING
   One in-flight pipeline per key; followers await the leader's result. Cancellation
@@ -33,8 +37,11 @@ import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-#: Terminals that may be cached. Everything else is a statement about transient
-#: state, or an unverified reply which must never be replayed as a result.
+#: Terminals that may be cached, as an ALLOWLIST. Everything else is a statement
+#: about transient state, or an unverified reply which must never be replayed.
+#: An allowlist is the only form that survives a new reason being added: with a
+#: `reason != "budget_gone"` blacklist, `upstream_error` and `queue_full` would have
+#: been cached the day they were introduced.
 CACHEABLE_TERMINALS = frozenset({"answered", "no_evidence"})
 
 

@@ -25,6 +25,11 @@ import sys
 from pathlib import Path
 
 TERMINALS = ("answered", "no_evidence", "passages_only", "busy", "abandoned", "error")
+#: Re-typed from relay/contracts.PASSAGES_ONLY_REASONS, deliberately not imported
+#: for the same reason as check_events (D-006). tests/test_reasons.py keeps them equal.
+_PERMITTED_REASONS = {
+    "budget_gone", "upstream_error", "verify_failed", "breaker_open", "queue_full",
+}
 
 
 # ---------------------------------------------------------------- loading
@@ -111,6 +116,10 @@ def check(events: list[dict], tol: float = 0.05) -> list[str]:
         if rt is not None and rt not in ("verified_answer", "no_evidence",
                                           "passages_only"):
             faults.append(f"I5 {rid}: terminal reply_type={rt!r} is not a permitted reply")
+        # Same re-typed set as check_events (D-006); test_reasons keeps them equal.
+        rs = terms[0].get("reason") if terms else None
+        if rs is not None and rs not in _PERMITTED_REASONS:
+            faults.append(f"I5 {rid}: passages_only reason={rs!r} is not permitted")
         ends = [e for e in evs if e["type"] == "request.end"]
         if not ends:
             faults.append(f"I6 {rid}: no request.end")

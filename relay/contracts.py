@@ -141,11 +141,42 @@ class NoEvidence:
     nearest: tuple[Chunk, ...] = ()
 
 
+#: The ONLY values `PassagesOnly.reason` may take.
+#:
+#: This exists because the four causes were previously conflated: every
+#: `DeadlineExceeded` -- local budget, outer deadline, attempt timeout, and "gave up
+#: on repeated 5xx" -- reached the user as `budget_gone`, so a provider outage was
+#: reported as a budget problem with the budget untouched (BUG-042).
+#:
+#: The distinction is not cosmetic. `budget_gone` means "we cannot spend"; the others
+#: mean "we spent and it did not work". Only the first is a reason to tell a user to
+#: wait, and only the first is something an operator can fix by raising a limit.
+PASSAGES_ONLY_REASONS: frozenset[str] = frozenset({
+    "budget_gone",       # a BUDGET was actually refused: local reservation, or a
+                         # provider day limit. Nothing was generated.
+    "upstream_error",    # the provider failed or the deadline ran out: retries
+                         # exhausted on 5xx, attempt timeout, connection error,
+                         # StreamProtocolError, or the outer deadline.
+    "verify_failed",     # a model answer existed and our own checks rejected it.
+    "breaker_open",      # we refused to call at all; the breaker is open.
+    "queue_full",        # we refused to admit; the queue was full.
+})
+
+
 @dataclass(frozen=True)
 class PassagesOnly:
     message: str
     passages: tuple[Chunk, ...]
-    reason: str                # budget_gone | verify_failed | breaker_open | queue_full
+    reason: str                # one of PASSAGES_ONLY_REASONS
+
+    def __post_init__(self) -> None:
+        # Validated at construction, not at the boundary: a typo in a reason string
+        # would otherwise be invisible until someone read the log. `__post_init__`
+        # on a frozen dataclass may raise but must not assign.
+        if self.reason not in PASSAGES_ONLY_REASONS:
+            raise ValueError(
+                f"PassagesOnly.reason={self.reason!r} is not one of "
+                f"{sorted(PASSAGES_ONLY_REASONS)}")
 
 
 Reply = VerifiedAnswer | NoEvidence | PassagesOnly
