@@ -71,6 +71,12 @@ The reserve exists because BUG-001 and BUG-002 both needed a re-run. Assume it w
       "plan": 60000,
       "cap_tpd_unverified": 200000,
       "spent": 468
+    },
+    {
+      "date": "2026-11-13",
+      "plan": 60000,
+      "cap_tpd_unverified": 200000,
+      "spent": 3868
     }
   ],
   "runs": [
@@ -91,6 +97,38 @@ The reserve exists because BUG-001 and BUG-002 both needed a re-run. Assume it w
       "ceiling": 100,
       "labelled_source": "runs/probe_20261111T064821Z",
       "label": "accidental: pytest live call"
+    },
+    {
+      "utc": "2026-11-13T10:12:13+00:00",
+      "modes": [
+        "stream"
+      ],
+      "tokens": 168,
+      "ceiling": 1500
+    },
+    {
+      "utc": "2026-11-13T10:16:34+00:00",
+      "modes": [
+        "stream"
+      ],
+      "tokens": 168,
+      "ceiling": 1500
+    },
+    {
+      "utc": "2026-11-13T10:17:43+00:00",
+      "modes": [
+        "burst"
+      ],
+      "tokens": 2365,
+      "ceiling": 5000
+    },
+    {
+      "utc": "2026-11-13T10:19:51+00:00",
+      "modes": [
+        "reasoning"
+      ],
+      "tokens": 1167,
+      "ceiling": 3000
     }
   ]
 }

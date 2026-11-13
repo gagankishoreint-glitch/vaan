@@ -1,5 +1,3 @@
-cd /Users/gankai/Desktop/vaan/vaan
-cat > data/eval/questions.jsonl << 'EOF'
 {"qid": "A1", "author": "me", "type": "single", "paper": "attention", "question": "What's the number of parallel attention heads in the base Transformer?", "answer": "8", "gold": ["attn-v7:s3.2.2:c0001"]}
 {"qid": "A2", "author": "me", "type": "single", "paper": "attention", "question": "What BPE vocabulary size is used for the WMT 2014 English-German translation task?", "answer": "about 37000 tokens", "gold": ["attn-v7:s5.1:c0000"]}
 {"qid": "A3", "author": "me", "type": "single", "paper": "attention", "question": "What dropout rate is applied to the base model?", "answer": "0.1", "gold": ["attn-v7:s5.4:c0001"]}
@@ -30,4 +28,3 @@ cat > data/eval/questions.jsonl << 'EOF'
 {"qid": "A9", "author": "me", "type": "single", "paper": "attention", "question": "What is the dimensionality of the key vectors (dk) in the attention mechanism?", "answer": "64", "gold": ["attn-v7:s3.2.1:c0000"]}
 {"qid": "H2", "author": "me", "type": "single", "paper": "hnet", "question": "How does H-Net measure performance on the enwik8 dataset?", "answer": "using bits-per-character (BPC)", "gold": ["hnet-v2:s4:c0000"]}
 {"qid": "M4", "author": "me", "type": "single", "paper": "moshi", "question": "What is the theoretical latency limit for Moshi to be considered real-time?", "answer": "160 ms", "gold": ["moshi-v1:s1:c0000"]}
-EOF

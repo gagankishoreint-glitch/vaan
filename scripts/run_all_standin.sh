@@ -52,7 +52,7 @@ declare -a RESULTS=()
 
 record () {  # name status note
   RESULTS+=("$(printf '%-26s %-8s %s' "$1" "$2" "$3")")
-  printf '%s\n' "${RESULTS[-1]}" >> "$OUT_ROOT/index.txt"
+  printf '%s\n' "${RESULTS[${#RESULTS[@]}-1]}" >> "$OUT_ROOT/index.txt"
   case "$2" in
     PASS)    PASS=$((PASS+1)) ;;
     FAIL)    FAIL=$((FAIL+1)) ;;
@@ -216,7 +216,7 @@ if want stream_error; then
   # from a healthy stand-in is the false green this harness exists to prevent --
   # the first version of this script reported outcomes ["ok"] and called it a pass.
   stop_standin
-  CFG=$(mktemp --suffix=.yaml)
+  CFG=$(mktemp -t standin_cfg)
   "$PY" - "$CFG" <<'PYCFG'
 import sys, yaml
 doc = yaml.safe_load(open("config/relay.yaml", encoding="utf-8"))
