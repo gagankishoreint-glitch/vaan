@@ -68,12 +68,18 @@ class BreakerOpen(Exception):
 
 
 class _StreamHTTPError(Exception):
-    """A non-200 arriving on a streamed request. Carries the body for the log."""
+    """A non-200 arriving on a streamed request. Carries the evidence for the log.
 
-    def __init__(self, status: int, text: str):
+    `headers` is captured, not read later: the response is closed when the stream
+    context manager exits, and the `x-ratelimit-*` headers are the only place the
+    remaining budget for that model exists.
+    """
+
+    def __init__(self, status: int, text: str, headers: Optional[dict] = None):
         super().__init__(f"stream failed with {status}")
         self.status = status
         self.text = text
+        self.headers = headers or {}
 
 
 class BudgetBook:
@@ -539,6 +545,49 @@ class Gateway:
                     if wait:
                         await self.clock.sleep(wait)   # slot released while sleeping
                     continue
+                except _StreamHTTPError as e:
+                    # A non-200 on a STREAMED request. Before this handler existed the
+                    # exception escaped `call()` entirely: no retry (1 attempt of the
+                    # 3 configured), no breaker record, no attempt.end -- an attempt
+                    # charged and invisible, the same evidence hole as BUG-023
+                    # (BUG-043). The buffered path has handled this shape all along;
+                    # the streamed one simply never reached it.
+                    #
+                    # Classified by STATUS, using the same table as the buffered path,
+                    # so the two cannot drift into different meanings for one code.
+                    attempt.status = e.status
+                    attempt.error_body = (e.text or "")[:2000]
+                    attempt.t_first_byte = self.clock.now()
+                    attempt.t_end = attempt.t_first_byte
+                    _rl = parse_rl_headers(e.headers or {})
+                    attempt.retry_after_s = _rl["retry_after_s"]
+                    attempt.rl_headers_raw = dict(e.headers or {})
+                    if e.status == 429:
+                        attempt.outcome = (Outcome.RATE_LIMITED_DAY
+                                           if (attempt.retry_after_s or 0) >= 60
+                                           else Outcome.RATE_LIMITED_MIN)
+                    elif e.status == 413:
+                        attempt.outcome = Outcome.TOO_LARGE
+                    else:
+                        attempt.outcome = Outcome.SERVER_ERROR
+                    scope.attempt_end(attempt)
+                    if managed:
+                        self.breaker.record(False, attempt.t_end)
+
+                    last_error = (f"{attempt.outcome.value} status={e.status} "
+                                  f"retry_after={attempt.retry_after_s}")
+                    decision = self._next_delay(attempt, t_start, deadline_s,
+                                                attempt_no, max_attempts, managed)
+                    if decision is None:
+                        if attempt.outcome is Outcome.RATE_LIMITED_DAY:
+                            raise DeadlineExceeded(last_error) from None
+                        raise UpstreamError(last_error) from None
+                    wait, why = decision
+                    scope.emit("retry.sleep", attempt_id=attempt.attempt_id,
+                               sleep_s=round(wait, 3), policy=self.policy, why=why)
+                    if wait:
+                        await self.clock.sleep(wait)
+                    continue
                 except asyncio.CancelledError:
                     attempt.outcome = Outcome.CANCELLED
                     attempt.t_end = self.clock.now()
@@ -712,8 +761,12 @@ class Gateway:
                 # guaranteed to outlive the context manager.
                 captured.update(dict(resp.headers))
                 if resp.status_code != 200:
+                    # Headers and body both, at raise time: the response is closed
+                    # when the context manager exits, so reading them in the handler
+                    # would mean reading a closed stream.
                     await resp.aread()
-                    raise _StreamHTTPError(resp.status_code, resp.text)
+                    raise _StreamHTTPError(resp.status_code, resp.text,
+                                           dict(resp.headers))
                 async for line in resp.aiter_lines():
                     yield line
 

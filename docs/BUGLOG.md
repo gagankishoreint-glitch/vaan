@@ -1240,3 +1240,67 @@ relayed through `curl`. Those files are not in the tree yet; the supervisor comm
 `test_when_the_probe_records_land_the_values_must_be_read_from_them` **fails as soon as
 any probe jsonl appears**, so the retyped copy cannot quietly outlive the files it was
 transcribed from.
+
+## BUG-043 · L4 streaming · a streamed non-200 never reached the retry logic — FIXED
+**Found while implementing BUG-042.** `_streamed_call` raised the private
+`_StreamHTTPError` on any non-200, and **nothing caught it**. It was raised in one
+place and referenced in no other.
+
+Measured before the fix (`max_attempts=3`, one 500 on the stream path):
+
+```
+RAISED: _StreamHTTPError | stream failed with 500
+HTTP attempts made: 1 | breaker: closed
+```
+
+Three consequences, all wrong:
+
+1. **No retry.** One 500 ended the request with attempts remaining.
+2. **The breaker was blind.** A streamed 5xx never counted as a failure, so a
+   provider failing *only* on the stream path would never trip it.
+3. **No `attempt.end`.** The attempt was charged and invisible — the same evidence
+   hole as BUG-023.
+
+Since BUG-042 the pipeline catches `StreamProtocolError` and maps it to
+`upstream_error`, so a request did at least end with a terminal — but this exception
+was a **private class the pipeline could not name**, so that handler never saw it.
+
+**Fix: the streamed path now handles a non-200 the way the buffered path always has.**
+The handler sits beside the existing `StreamProtocolError` handler and reuses the same
+status table, so a 429 cannot mean one thing streamed and another buffered:
+
+| status | outcome | reason if not retryable |
+|---|---|---|
+| 429 with `retry-after` ≥ 60 s | `rate_limited_day` | `budget_gone` |
+| 429 otherwise | `rate_limited_min` | `upstream_error` |
+| 413 | `too_large` | `upstream_error` |
+| anything else | `server_error` | `upstream_error` |
+
+The exception carries **headers** as well as the body, captured at raise time: the
+response is closed when the stream context manager exits, and `x-ratelimit-*` is the
+only place that model's remaining budget exists.
+
+**Stand-in over real HTTP** (`error_rate=1.0`, `runs/standin/stream_http_error.json`,
+UNCALIBRATED): 2 HTTP attempts, **2 `attempt.end` events**, both `server_error`/500,
+raising `UpstreamError`. Breaker `closed` at threshold 5 after 2 failures — correct.
+
+**One retry, not three, and that is not a bug.** `retry_budget_ratio` 0.1 per call
+against a `retry_credit_floor` of 1.0 affords exactly one retry. A test that asserted
+three attempts would have encoded the wrong policy.
+
+**Mutation checks:**
+
+| mutation | result |
+|---|---|
+| remove the `_StreamHTTPError` handler (the old code) | **9 of 11 fail** — `_StreamHTTPError` escapes |
+| handle it but raise instead of `continue` (no retry) | 3 fail, incl. `test_a_streamed_500_is_RETRIED_not_fatal` |
+
+**Two test-design traps found by these tests, both of which would have made the
+suite pass without the fix:**
+
+* a stub `RequestScope` whose `attempt_end` was a no-op made every "attempt.end was
+  written" assertion **vacuous** — the events could not exist either way. The tests
+  now use the real `RequestScope`.
+* `deadline_s=0.5` with a 500's fallback wait of 1.0 s makes "no retry" the *correct*
+  outcome, so `test_..._is_RETRIED` passed against the bug. Retry tests now leave
+  room for the wait.
