@@ -72,6 +72,23 @@ class Attempt:
     tokens_out: Optional[int] = None
     tokens_cached: Optional[int] = None
     rl_headers_raw: dict = field(default_factory=dict)   # unmodified strings
+    #: Every SSE line received, verbatim, with its parse outcome. Empty for
+    #: non-streamed attempts. This exists so a failed stream can be diagnosed from
+    #: the event log alone: the previous parser discarded unparseable lines, which
+    #: made "provider sent garbage" and "provider sent nothing" the same observation.
+    sse_raw: list = field(default_factory=list)
+    n_sse_lines: int = 0
+    n_sse_malformed: int = 0
+    sse_saw_done: Optional[bool] = None
+    #: A protocol fault, distinct from a timeout. Retryable, but logged as its own
+    #: outcome so the two never get averaged together.
+    protocol_error: Optional[str] = None
+    #: True when THIS attempt was cut by `gateway.attempt_timeout_s` rather than by
+    #: the outer request deadline. A per-attempt expiry is retryable; the outer
+    #: deadline ends the request. Without the flag the two are indistinguishable in
+    #: the log and a retry storm looks like normal traffic.
+    attempt_timed_out: Optional[bool] = None
+    timeout_limit: Optional[str] = None    # "attempt_timeout" | "deadline"
     error_body: Optional[str] = None
 
     def finished(self) -> bool:
@@ -124,11 +141,42 @@ class NoEvidence:
     nearest: tuple[Chunk, ...] = ()
 
 
+#: The ONLY values `PassagesOnly.reason` may take.
+#:
+#: This exists because the four causes were previously conflated: every
+#: `DeadlineExceeded` -- local budget, outer deadline, attempt timeout, and "gave up
+#: on repeated 5xx" -- reached the user as `budget_gone`, so a provider outage was
+#: reported as a budget problem with the budget untouched (BUG-042).
+#:
+#: The distinction is not cosmetic. `budget_gone` means "we cannot spend"; the others
+#: mean "we spent and it did not work". Only the first is a reason to tell a user to
+#: wait, and only the first is something an operator can fix by raising a limit.
+PASSAGES_ONLY_REASONS: frozenset[str] = frozenset({
+    "budget_gone",       # a BUDGET was actually refused: local reservation, or a
+                         # provider day limit. Nothing was generated.
+    "upstream_error",    # the provider failed or the deadline ran out: retries
+                         # exhausted on 5xx, attempt timeout, connection error,
+                         # StreamProtocolError, or the outer deadline.
+    "verify_failed",     # a model answer existed and our own checks rejected it.
+    "breaker_open",      # we refused to call at all; the breaker is open.
+    "queue_full",        # we refused to admit; the queue was full.
+})
+
+
 @dataclass(frozen=True)
 class PassagesOnly:
     message: str
     passages: tuple[Chunk, ...]
-    reason: str                # budget_gone | verify_failed | breaker_open | queue_full
+    reason: str                # one of PASSAGES_ONLY_REASONS
+
+    def __post_init__(self) -> None:
+        # Validated at construction, not at the boundary: a typo in a reason string
+        # would otherwise be invisible until someone read the log. `__post_init__`
+        # on a frozen dataclass may raise but must not assign.
+        if self.reason not in PASSAGES_ONLY_REASONS:
+            raise ValueError(
+                f"PassagesOnly.reason={self.reason!r} is not one of "
+                f"{sorted(PASSAGES_ONLY_REASONS)}")
 
 
 Reply = VerifiedAnswer | NoEvidence | PassagesOnly

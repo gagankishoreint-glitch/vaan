@@ -136,6 +136,15 @@ class RequestScope:
             tokens_cached=attempt.tokens_cached,
             rl_headers_raw=attempt.rl_headers_raw,
             error_body=attempt.error_body,
+            # Wire evidence. Present only for streamed attempts; a truncated stream
+            # is otherwise indistinguishable from an empty one after the fact.
+            sse_raw=getattr(attempt, "sse_raw", None) or None,
+            n_sse_lines=getattr(attempt, "n_sse_lines", None),
+            n_sse_malformed=getattr(attempt, "n_sse_malformed", None),
+            sse_saw_done=getattr(attempt, "sse_saw_done", None),
+            protocol_error=getattr(attempt, "protocol_error", None),
+            attempt_timed_out=getattr(attempt, "attempt_timed_out", None),
+            timeout_limit=getattr(attempt, "timeout_limit", None),
         )
 
     def abandon(self, reason: str = "user") -> None:
@@ -208,7 +217,10 @@ class EventLog:
         Path(run_dir).mkdir(parents=True, exist_ok=True)
         self.path = Path(run_dir) / "events.jsonl"
         self._f = open(self.path, "a", buffering=1, encoding="utf-8")
-        self._q: queue.SimpleQueue = queue.SimpleQueue()
+        # queue.Queue, NOT SimpleQueue: flush() needs join()/task_done() to wait for
+        # work the writer has already dequeued but not yet written. An unbounded
+        # Queue keeps put() non-blocking, so emit() stays an enqueue (rule 8).
+        self._q: queue.Queue = queue.Queue()
         self._closed = False
         self._lock = threading.Lock()
         self._scopes: dict[str, RequestScope] = {}
@@ -272,6 +284,18 @@ class EventLog:
             counts = dict(self._attempt_backend_counts)
         self.emit("run.end", attempt_backend_counts=counts, **fields)
 
+    def start_run(self, **fields: Any) -> None:
+        """Record what this run ASSUMED, before any request happens.
+
+        `run.end` records how a run went; without a `run.start` there is nowhere to
+        record the assumptions it was run under. `standin.refund_unused_cap` is the
+        first such assumption: it changes the stand-in's bucket arithmetic, so two
+        runs with the same seed and the same questions can legitimately disagree.
+        Without this field a result cannot be tied to the assumption that produced
+        it, and the A/B that settles Q-06 would be two unattributable tables.
+        """
+        self.emit("run.start", **fields)
+
     def request(self, req_id: str) -> RequestScope:
         """Get-or-create the scope for a request."""
         with self._lock:
@@ -284,21 +308,34 @@ class EventLog:
     def _writer(self) -> None:
         while True:
             item = self._q.get()
-            if item is self._SENTINEL:
-                break
-            self._f.write(json.dumps(item, default=str) + "\n")
+            try:
+                if item is self._SENTINEL:
+                    break
+                self._f.write(json.dumps(item, default=str) + "\n")
+                self._f.flush()      # the file is line-buffered; be explicit anyway
+            finally:
+                # Runs for EVERY get(), including the sentinel, so a join() issued
+                # after close() cannot hang on an unfinished task.
+                self._q.task_done()
 
     def flush(self) -> None:
-        """Wait until the writer thread has drained the queue.
+        """Wait until every queued event has actually been WRITTEN.
 
-        Safe to call after close(): close() already joins the writer, so there is
-        nothing left to do. Raising here (ValueError on a closed file) turned a
-        correct shutdown into a crash -- see docs/BUGLOG.md BUG-002.
+        The previous implementation polled `self._q.empty()`, which is not the same
+        question. The writer thread can have already dequeued an item and still be
+        serialising it, so the queue reads empty while an event is in flight; the
+        poll then exits, `read_events()` sees a short file, and the event appears a
+        moment later. Measured: rewinding the queue to that state made flush()
+        return in 1.1 ms with the event still invisible (BUG-026).
+
+        `join()` blocks until every put() has been matched by a task_done(), which
+        the writer calls after the write -- so it waits for the write, not for the
+        dequeue. Safe to call after close(): the writer calls task_done() for the
+        sentinel too, and close() joins the thread first.
         """
         if self._closed:
             return
-        while not self._q.empty():
-            time.sleep(0.001)
+        self._q.join()
         self._f.flush()
 
     def close(self) -> None:

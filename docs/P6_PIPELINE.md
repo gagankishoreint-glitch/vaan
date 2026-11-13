@@ -45,14 +45,19 @@ A6  passages_only  no citations   <- model cited nothing that existed
 
 ## Gateway behaviours implemented
 
+> **Name correction.** Two rows here used to cite `_maybe_retry`, the recursive method
+> that BUG-013 removed. The current decision point is `_next_delay()` — a pure
+> function returning either `None` (stop) or `(seconds, why)` — called from the
+> bounded loop in `Gateway.call()`. `_maybe_retry` no longer exists.
+
 | behaviour | where | tested |
 |---|---|---|
 | no bucket negative | `Budget.take` asserts | `test_budget_never_goes_negative` |
 | check-and-take, no await between | `Budget.take` | (rule 9, by construction) |
 | reconcile from headers, ratio-based | `Budget.reconcile` | `test_budget_reconcile_uses_provider_ratio...` |
 | breaker closed/open/half-open | `Breaker` | `test_breaker_opens_after_threshold...` |
-| never retry a day 429 | `_maybe_retry` | (code path) |
-| never sleep past the deadline | `_maybe_retry` | observed: `retry-after would exceed the deadline` |
+| never retry a day 429 | `_next_delay` (returns `None`) | `test_naive_ignores_retry_after_and_deadline`, `_next_delay` day-429 branch |
+| never sleep past the deadline | `_next_delay` | observed: `retry-after would exceed the deadline` |
 | transport error still terminates | `run_queries` | checker I1 |
 
 ## What is NOT implemented (deliberately, and to be listed as such)

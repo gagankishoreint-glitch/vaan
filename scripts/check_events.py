@@ -33,6 +33,18 @@ from typing import Any, Iterable
 
 TERMINAL_TYPES = {"terminal", "request.terminal", "req.terminal"}
 PERMITTED_REPLIES = {"verified_answer", "no_evidence", "passages_only"}
+#: D-006: deliberately RE-TYPED, not imported. This checker exists so that a bug in
+#: the library cannot hide from it; importing the library's own set would make the
+#: checker agree with the bug. The cost of duplication is drift, so
+#: `tests/test_reasons.py` asserts these two literals are equal -- drift fails a
+#: test instead of silently passing both files.
+#:
+#: `budget_gone` means a BUDGET was refused. `upstream_error` means the provider
+#: failed or the deadline passed. Conflating them was BUG-042: a 500 storm reached
+#: the user as a budget problem with the budget untouched.
+_PERMITTED_REASONS = {
+    "budget_gone", "upstream_error", "verify_failed", "breaker_open", "queue_full",
+}
 TOKEN_EVENTS = {"attempt.end", "usage"}
 ATTEMPT_TYPES = {"attempt.start", "attempt.end"}
 
@@ -178,6 +190,17 @@ def check(events: Iterable[dict], latency_tol_s: float = 0.05) -> Report:
                 rep.violations.append(Violation(
                     "I5_permitted_reply_only", req_id,
                     f"terminal reply_type={kind!r} is not one of {sorted(PERMITTED_REPLIES)}"))
+            # The REASON is checked too, and only for the reply type that has one.
+            # A passages_only with a misspelt or invented reason is a report row
+            # that cannot be aggregated -- and before BUG-042 the set had no
+            # `upstream_error` member, so a 5xx had to be logged as `budget_gone`.
+            if kind == "passages_only":
+                reason = t.get("reason")
+                if reason is not None and reason not in _PERMITTED_REASONS:
+                    rep.violations.append(Violation(
+                        "I5_permitted_reply_only", req_id,
+                        f"passages_only reason={reason!r} is not one of "
+                        f"{sorted(_PERMITTED_REASONS)}"))
 
         # I6 no tokens after abandonment
         abandons = [e for e in evs if e.get("type") == "request.abandoned"]

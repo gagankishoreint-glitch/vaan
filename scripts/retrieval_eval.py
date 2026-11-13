@@ -91,18 +91,35 @@ def evaluate(retriever: Retriever, questions: list[dict], k: int,
         gated_in = top >= threshold
         rows.append({
             "qid": q["qid"], "type": q["type"], "gold": gold, "top": got[:k],
-            "rank": rank, "id_rank": id_rank, "top_score": round(top, 3),
+            "rank": rank, "id_rank": id_rank,
+            # RAW, not rounded. `gated_in` below is computed from `top`, so storing
+            # round(top, 3) made the artifact internally inconsistent: a row could
+            # read `top_score: 15.86, gated_in: false` against a threshold of 15.86,
+            # and any consumer recomputing the gate from the stored value got the
+            # opposite answer (BUG-029). The value a decision used must be the value
+            # recorded; `top_score_display` is the rounded form for tables.
+            "top_score": top,
+            "top_score_display": round(top, 3),
             "gated_in": gated_in, "chars": chars,
         })
     answerable = [r for r in rows if r["gold"]]
-    unanswerable = [r for r in rows if not r["gold"]]
+    # The no-gold pool is NOT homogeneous (same split as sweep()). `ambiguous` means
+    # several defensible answers exist, so the gate admitting one is CORRECT
+    # behaviour. Counting it as a false answer scored the system wrong for being
+    # right, understated the rate by 75% (1/7 instead of 1/4), and contradicted
+    # docs/P3_RETRIEVAL.md -- which had already made this exact correction while
+    # this function was left behind. Keep all three counts.
+    unanswerable = [r for r in rows if not r["gold"] and r["type"] != "ambiguous"]
+    ambiguous = [r for r in rows if not r["gold"] and r["type"] == "ambiguous"]
     hit = [r for r in answerable if r["rank"] is not None]
     id_hit = [r for r in answerable if r["id_rank"] is not None]
     mrr = sum(1 / (r["rank"] + 1) for r in hit) / max(1, len(answerable))
     # false abstain: answerable question the gate would refuse
     fa = [r for r in answerable if not r["gated_in"]]
-    # false answer: unanswerable question the gate would accept
+    # false answer: genuinely unanswerable question the gate would accept.
+    # Ambiguous questions are reported separately and NEVER counted here.
     fb = [r for r in unanswerable if r["gated_in"]]
+    amb_in = [r for r in ambiguous if r["gated_in"]]
     return {
         "k": k, "threshold": threshold, "rows": rows,
         "recall_at_k": len(hit) / max(1, len(answerable)),
@@ -111,6 +128,8 @@ def evaluate(retriever: Retriever, questions: list[dict], k: int,
         "false_abstain": len(fa) / max(1, len(answerable)),
         "false_answer": len(fb) / max(1, len(unanswerable)),
         "n_answerable": len(answerable), "n_unanswerable": len(unanswerable),
+        # Reported, not scored: a high score on an ambiguous question is correct.
+        "ambiguous_admitted": len(amb_in), "n_ambiguous": len(ambiguous),
         "char_budget": char_budget,
         "chars_per_answer_mean": (sum(r["chars"] for r in rows) / len(rows)
                                   if rows else 0.0),
@@ -160,6 +179,12 @@ def sweep(retriever: Retriever, questions: list[dict], k: int,
         fb = sum(1 for s in una if s >= t)      # unanswerable admitted
         amb_in = sum(1 for s in amb if s >= t)  # ambiguous admitted (not an error)
         points.append({
+            # Full precision on purpose. Rounding this to 3dp made two DIFFERENT
+            # thresholds print as "15.86" while giving different counts (5 vs 6
+            # answerable refused at the committed setting) -- an audit could not
+            # tell which decision the row described. `exact` is the value the
+            # comparison above actually used; `threshold` is for display only.
+            "exact": t,
             "threshold": round(t, 3),
             "false_abstain": fa, "n_answerable": n_a,
             "false_abstain_frac": fa / n_a if n_a else 0.0,

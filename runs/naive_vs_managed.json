@@ -5,14 +5,14 @@
     "http": 1,
     "429s": 1,
     "outcome": "DeadlineExceeded",
-    "wall_s": 0.01
+    "wall_s": 0.001
   },
   {
     "policy": "naive",
     "deadline_s": 3.0,
-    "http": 1,
-    "429s": 1,
+    "http": 5,
+    "429s": 5,
     "outcome": "DeadlineExceeded",
-    "wall_s": 0.01
+    "wall_s": 0.806
   }
 ]

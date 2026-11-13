@@ -21,6 +21,12 @@ models:
   # the service rejects the parameter, so this is the fallback until then.
   reasoning_effort: "low"
   buckets_separate_per_model: null    # set by P1 probe: exhaust one model, watch the other's headers
+  # Model cascade (item F). rewrite/verify -> small, draft -> large at L0; at L1 and
+  # above EVERYTHING -> small. Depends on the buckets above being separate: if they
+  # are shared, routing saves nothing and the log says so.
+  cascade:
+    enabled: true
+    draft_large_at_l0: true           # UNMEASURED: quality-vs-cost of a large draft
 
 user:
   patience_s: null                    # set by L5 measurement: observed time-to-abandon in the harness
@@ -32,6 +38,20 @@ slo:
 
 pipeline:
   max_loops: 1
+  # Exact-match answer cache, in front of the queue. A hit costs 0 tokens and never
+  # waits. Only VerifiedAnswer and NoEvidence are stored: a PassagesOnly(budget_gone)
+  # is a statement about OUR state and caching it would turn a transient shortage
+  # into a durable refusal.
+  cache:
+    enabled: true
+    max_entries: 512
+    ttl_s: 900.0                      # UNMEASURED: how long an answer stays valid
+    # Bumped whenever the prompt text changes, because the cache key includes it.
+    # An answer produced by a different prompt must not be served as this one.
+    prompt_version: "p6.1"
+  # One in-flight pipeline per cache key; followers await it. The run is cancelled
+  # only when the LAST waiter abandons.
+  coalesce: true
   # Stream the draft so model_ttft (first CONTENT delta) is observable. The
   # pipeline still buffers and verifies before sending, so this does not reduce
   # user-visible latency yet -- it makes the timing measurable.
@@ -40,7 +60,11 @@ pipeline:
   top_k: 4
   max_tokens: {rewrite: 80, draft: 400, verify: 120}
   # Gate on the optional LLM verify step (PRD s4). Code checks always run.
+  # Optional LLM self-check (item G). OFF by default: it costs a call per answer and
+  # nothing here has shown it catches what the code checks miss. It can only DOWNGRADE
+  # a code-verified answer, never upgrade one -- see relay/pipeline/selfcheck.py.
   llm_verify:
+    enabled: false
     min_tpm_remaining_frac: null      # set by P6: budget fraction below which LLM verify is skipped
     min_tpd_remaining_frac: null      # set by P6: same rule, daily bucket
 
@@ -57,8 +81,22 @@ gateway:
   # Credit granted at start-up so a cold gateway can retry its first failures.
   # 1.0 = allow one retry before any traffic has accrued.
   retry_credit_floor: 1.0
-  attempt_timeout_s: null             # set by P1 probe: p99 of stand-in fast path, plus margin
-  queue_max: null                     # set by P1: depth at which admission starts queueing/shedding
+  # PER-ATTEMPT cap, distinct from request_deadline_s (the whole request) and from
+  # the retry policy. One attempt that exceeds this is abandoned and RETRIED; the
+  # outer deadline still bounds the total. UNMEASURED: needs p99 of the real fast
+  # path from the P1 probe. null = no per-attempt cap (the outer deadline only),
+  # because inventing a number here would silently cut healthy requests.
+  attempt_timeout_s: null             # set by P1 probe: p99 of fast path, plus margin
+  # Admission queue (item D). `queue_max` is the number of requests allowed to WAIT;
+  # beyond that a request is shed with PassagesOnly(queue_full) -- at 0 tokens, never
+  # a bare rejection. workers drain the queue. UNMEASURED: both need the P1 probe's
+  # observed concurrency before they mean anything.
+  queue_max: null                     # set by P1: depth at which admission sheds
+  workers: 4                          # provisional; UNMEASURED
+  # Starting estimate for how long one request occupies a worker. Turns queue DEPTH
+  # into an EXPECTED WAIT, which is what the deadline check compares against. A queue
+  # of 3 is harmless at 40 ms each and fatal at 30 s each. UNMEASURED.
+  service_estimate_s: 1.0             # UNMEASURED
   breaker: {fail_threshold: 5, open_s: 10}
   retry_jitter_frac: 0.0              # set by P9: raised if the harness shows retry synchronisation
   # A 429 is treated as a DAY limit if retry-after is at least this. Deliberately
@@ -73,6 +111,11 @@ ladder:
   # PRD s6. L0 and L3 are structural; L1 and L2 need measured thresholds.
   l1_tpm_remaining_frac: 0.25         # trigger: TPM remaining below this fraction
   l1_queue_wait_s: 2.0                # trigger: admission queue wait exceeds this
+  # L2 trigger: remaining TPM fraction below which a NEW generation is refused and
+  # the request is served from cache/coalescing only. Its own key, not a multiple of
+  # the L1 trigger -- a second invented multiple is the unmeasured-threshold mistake.
+  # UNMEASURED.
+  l2_tpm_remaining_frac: 0.02
   l2_dup_window_s: null               # set by P7: duplicate-arrival window measured from the event log
   l2_max_tokens_scale: null           # set by P7: answer-cap multiplier chosen at L2
 
@@ -88,13 +131,38 @@ retrieval:
 
 standin:
   seed: 7
-  # Calibration targets for P4, all sourced from the P1 probe.
-  ttft_ms: null                       # set by P1 probe: TTFT distribution to replay
-  tokens_per_s: null                  # set by P1 probe: observed generation rate
-  error_rate: null                    # set by P1 probe: observed 5xx rate (0 if none seen)
-  p429_rate: null                     # set by P1 probe: observed 429 rate under our traffic
-  per_minute_limit: null              # set by P1 probe: observed x-ratelimit-limit-tokens
-  per_day_limit: null                 # set by P1 probe: observed x-ratelimit-limit-requests
+  # Calibration targets for P4.
+  #
+  # A null here means NOT YET MEASURED, and the stand-in prints a provisional
+  # fallback at startup. Never cite a probe mode as the source of a value before
+  # that mode has run -- see the table in docs/STANDIN.md.
+  # "set by X" names what WILL fill the key -- it is not a claim that X ran.
+  # NOT YET MEASURED is the status: never cite a probe mode as a source before it ran.
+  ttft_ms: null                       # set by P1 `single` mode -- NOT YET MEASURED: placeholder until that data exists
+  tokens_per_s: null                  # set by P1 `stream` mode -- NOT YET MEASURED: placeholder until that data exists
+  error_rate: null                    # set by P1 `burst`/`stream` -- NOT YET MEASURED: placeholder until that data exists
+  p429_rate: null                     # set by P1 `burst` mode -- NOT YET MEASURED: placeholder until that data exists
+  # Observed, n=4, from the probe's OWN records:
+  #   runs/probe_20261111T062707Z/single.jsonl, runs/probe_20261111T064821Z
+  # (transcribed raw JSONL pending: the supervisor commits calibration/probe/).
+  per_minute_limit: 8000
+  per_day_limit: null                 # set by the limits page (Q-04) -- NOT YET MEASURED: placeholder until that data exists
+  # Whether the provider gives back unused completion cap when the call finishes.
+  #
+  # This is an ASSUMPTION, not an observation. Q-06 is OPEN until the supervisor's
+  # A/B curl result lands; `false` is the branch we default to, nothing more.
+  #
+  # The evidence is weaker than it once looked here:
+  #   * the deficit at ADMISSION carried the full cap (156 = 76 prompt + 80 cap with
+  #     41 generated). That is the deficit-time reading, and it says nothing about
+  #     what happens at completion -- an earlier version of this comment drew the
+  #     refund conclusion from it, which does not follow.
+  #   * the 1->2 interval fits refund slightly better than no-refund: assuming call 2
+  #     reserved the same 156, refund misses by ~10 tokens and no-refund by ~29.
+  #     That is n=2 intervals, and refund is still ~10 out -- closer, not correct.
+  #   * n=2, one model, one prompt shape: INCONCLUSIVE.
+  # Flip it to run the A/B. Every run records this value in `run.start`.
+  refund_unused_cap: false
 
 observability:
   latency_sum_tolerance_s: 0.05       # tolerance for waiting + working + retrying ~= total

@@ -1,11 +1,18 @@
 """P5: minimal rate-limit-aware gateway. Single owner of limit state.
 
 Order per call (PRD s5): deadline -> budget reserve -> breaker -> send -> settle ->
-reconcile. Streamed and buffered responses follow the SAME order: streamed answers are
-every answer the pipeline sends, so a difference between the two paths is a difference
-in how the gateway behaves under load (BUG-025).
+reconcile. Streamed and buffered responses follow the SAME order and the same
+bookkeeping: a difference between the two paths is a difference in how the gateway
+behaves under load, and `pipeline.stream` can be switched on per run (BUG-025).
+This must be correct WHENEVER streaming is on -- `pipeline.stream` currently defaults
+to false, so "streamed" is not "every answer", it is "every answer once the flag is
+set". A path that is only correct in the mode you happen to be running is not
+correct.
 
-    python -m pytest -q tests/test_p4_p6.py                  -> 48 passed
+    python -m pytest -q tests/test_p4_p6.py                  -> 42 passed
+                                                                (39 with the corpus absent:
+                                                                 some cases need the PDFs
+                                                                 and fail loudly without them)
 -> classify -> retry. Every threshold comes from config; a null raises at the point
 of use rather than becoming a number nobody chose.
 
@@ -28,12 +35,32 @@ from relay.clock import Clock
 from relay.config import Config
 from relay.contracts import Attempt, Outcome
 from relay.events import EventLog, RequestScope
-from relay.gateway.stream import consume
+from relay.gateway.stream import StreamProtocolError, consume
 from relay.ratelimit_headers import parse_rl_headers
 
 
 class DeadlineExceeded(Exception):
-    pass
+    """A BUDGET was actually refused. Nothing was generated.
+
+    Split out from the old catch-all because "our budget is gone" and "the provider
+    failed" led to the same user-facing reason (`budget_gone`) -- a 500 storm was
+    reported as a budget problem with the budget untouched (BUG-042).
+
+    Raised ONLY for a refused local reservation or a provider day limit.
+    """
+
+
+class UpstreamError(Exception):
+    """The provider failed, or we ran out of time waiting for it.
+
+    Covers: retries exhausted on 5xx, a per-attempt timeout that could not be
+    retried, a connection error, a StreamProtocolError, and the outer deadline.
+    Distinct from DeadlineExceeded: we SPENT here, and it did not work.
+
+    Not called `ProviderError` because the outer deadline is our clock, not their
+    fault; both are "the request did not get an answer", which is what the user is
+    told and what the reason records.
+    """
 
 
 class BreakerOpen(Exception):
@@ -41,12 +68,91 @@ class BreakerOpen(Exception):
 
 
 class _StreamHTTPError(Exception):
-    """A non-200 arriving on a streamed request. Carries the body for the log."""
+    """A non-200 arriving on a streamed request. Carries the evidence for the log.
 
-    def __init__(self, status: int, text: str):
+    `headers` is captured, not read later: the response is closed when the stream
+    context manager exits, and the `x-ratelimit-*` headers are the only place the
+    remaining budget for that model exists.
+    """
+
+    def __init__(self, status: int, text: str, headers: Optional[dict] = None):
         super().__init__(f"stream failed with {status}")
         self.status = status
         self.text = text
+        self.headers = headers or {}
+
+
+class BudgetBook:
+    """One `Budget` PER MODEL. The provider's buckets are per model id.
+
+    Whether Groq's per-model buckets are truly independent is **UNVERIFIED**
+    (`models.buckets_separate_per_model` is null until the P1 probe's `buckets` mode
+    exhausts one model and watches the other's headers). It is a CONFIG ASSUMPTION:
+
+      * `buckets_separate_per_model: true`  -> one bucket per model (default here)
+      * `...: false`                        -> one shared bucket for every model
+      * `...: null` (unmeasured)            -> one bucket per model, because sharing
+                                               a bucket across models is the
+                                               behaviour that *loses* capacity
+                                               silently: a caller told "no budget
+                                               left for the small model" when the
+                                               small model is fine is wrong in the
+                                               expensive direction.
+
+    Defaulting to `true` while labelled is deliberate; the numbers are still no more
+    verified than the day/week reading in Q-04.
+    """
+
+    def __init__(self, tpm: int, rpd: int, separate: bool = True,
+                 default_model: str = ""):
+        self.default_tpm, self.default_rpd = tpm, rpd
+        self.separate = separate
+        self._by_model: dict[str, Budget] = {}
+        self._shared = Budget(tpm=tpm, rpd=rpd)
+        #: Which model a bare `gateway.budget.<attr>` refers to before any call.
+        #: Passed in from config: a model id literal here would violate rule 4, and
+        #: the lint test in this repo enforces that.
+        self._default_model = default_model
+        self._last_model: Optional[str] = None
+
+    def for_model(self, model: str) -> "Budget":
+        self._last_model = model
+        if not self.separate:
+            return self._shared
+        b = self._by_model.get(model)
+        if b is None:
+            b = Budget(tpm=self.default_tpm, rpd=self.default_rpd)
+            self._by_model[model] = b
+        return b
+
+    #: Convenience so existing call sites read the same.
+    def __getitem__(self, model: str) -> "Budget":
+        return self.for_model(model)
+
+    #: Back-compat for call sites that predate per-model buckets (`gw.budget.tpm_used`
+    #: in tests and scripts). They address the SMALL model's bucket explicitly rather
+    #: than silently picking a shared one, so the meaning of an old assertion does not
+    #: change: `models.small.id` is what those callers were always exercising.
+    @property
+    def default(self) -> "Budget":
+        """The bucket a bare `gw.budget.<attr>` means.
+
+        Before per-model buckets there was exactly one, so a legacy attribute read
+        could only mean "the bucket this gateway is using". That is preserved by
+        resolving to the most recently used model, not to a hard-coded id: a caller
+        that exercised model "m" must not be shown the small model's counters.
+        """
+        if not self.separate:
+            return self._shared
+        if self._last_model is not None:
+            return self.for_model(self._last_model)
+        return self.for_model(self._default_model)
+
+    def __getattr__(self, item):
+        # Only reached when normal lookup fails, so real attributes always win.
+        if item.startswith("_"):
+            raise AttributeError(item)
+        return getattr(self.default, item)
 
 
 @dataclass
@@ -147,11 +253,28 @@ class Budget:
 
 
 class Breaker:
+    """Closed -> open -> half-open -> closed, with a SINGLE probe in half-open.
+
+    The half-open state is the part that is easy to get wrong and expensive to get
+    wrong. `state()` returning "half-open" is only a label: if the caller lets every
+    request through while the breaker is half-open, the breaker does nothing at the
+    moment it matters most -- the provider has just recovered (or not), and the whole
+    fleet hammers it at once. That is the thundering herd the breaker exists to
+    prevent, deferred by one timeout.
+
+    So half-open admits exactly ONE probe (`try_admit`), and:
+      * probe succeeds -> closed, counters reset
+      * probe fails    -> open again for another `open_s`
+    A request that arrives while the probe is in flight is REFUSED, not queued.
+    """
+
     def __init__(self, fail_threshold: int, open_s: float):
         self.fail_threshold = fail_threshold
         self.open_s = open_s
         self.fails = 0
         self.opened_at: Optional[float] = None
+        #: True while a half-open probe is in flight. Only one may be.
+        self._probe_in_flight = False
 
     def state(self, now: float) -> str:
         if self.opened_at is None:
@@ -160,13 +283,36 @@ class Breaker:
             return "half-open"
         return "open"
 
+    def try_admit(self, now: float) -> tuple[bool, str]:
+        """May this request proceed? Returns (admitted, state).
+
+        This is the ONLY correct way to gate on the breaker: `state() == "open"` is
+        not enough, because "half-open" must admit one probe and refuse the rest.
+        """
+        st = self.state(now)
+        if st == "closed":
+            return True, st
+        if st == "open":
+            return False, st
+        # half-open
+        if self._probe_in_flight:
+            return False, st
+        self._probe_in_flight = True
+        return True, st
+
     def record(self, ok: bool, now: float) -> None:
+        was_half_open = self.state(now) == "half-open"
+        self._probe_in_flight = False
         if ok:
             self.fails = 0
             self.opened_at = None
             return
         self.fails += 1
         if self.fails >= self.fail_threshold:
+            self.opened_at = now
+        elif was_half_open:
+            # A failed probe re-opens immediately even below the threshold: the
+            # threshold counts consecutive failures on the CLOSED path, not probes.
             self.opened_at = now
 
 
@@ -177,7 +323,7 @@ class Gateway:
     log: EventLog
     base_url: str
     api_key: str
-    budget: Budget
+    budget: BudgetBook
     breaker: Breaker
     client: httpx.AsyncClient
     policy: str = "managed"
@@ -187,6 +333,11 @@ class Gateway:
     _last_attempt: Optional[Attempt] = None
     #: Hard cap on HTTP attempts per logical call, for the MANAGED policy.
     max_attempts: int = 3
+    #: Per-ATTEMPT timeout, distinct from `deadline_s` (the whole request).
+    #: None = no per-attempt cap. A timed-out attempt is RETRYABLE and gets its own
+    #: `attempt.end` with outcome TIMEOUT, so a single slow attempt does not look
+    #: like a slow request. Never allowed to extend the outer deadline.
+    attempt_timeout_s: Optional[float] = None
     max_tokens_map: dict = field(default_factory=dict)
     _retries_used: int = 0
     _calls: int = 0
@@ -203,11 +354,17 @@ class Gateway:
         b = cfg.get("gateway.breaker", {})
         return cls(
             cfg=cfg, clock=clock, log=log, base_url=base_url, api_key=api_key,
-            budget=Budget(tpm=cfg.get("models.small.tpm"), rpd=cfg.get("models.small.rpd")),
+            budget=BudgetBook(
+                tpm=cfg.get("models.small.tpm"),
+                rpd=cfg.get("models.small.rpd"),
+                # None (unmeasured) is treated as separate; see BudgetBook.
+                separate=cfg.get("models.buckets_separate_per_model", None) is not False,
+                default_model=cfg.get("models.small.id")),
             breaker=Breaker(b.get("fail_threshold", 5), b.get("open_s", 10.0)),
             client=client, policy=policy,
             retry_budget_ratio=cfg.get("gateway.retry_budget_ratio", 0.1),
             max_attempts=cfg.get("gateway.max_attempts", 3),
+            attempt_timeout_s=cfg.get("gateway.attempt_timeout_s", None),
         )
 
     # ------------------------------------------------------------ payload
@@ -252,6 +409,37 @@ class Gateway:
 
     # ------------------------------------------------------------ the loop
 
+    def _attempt_budget(self, deadline_s: float, t_start: float) -> tuple[float, str]:
+        """Seconds this ATTEMPT may take, and which limit produced it.
+
+        Two independent limits:
+          * the outer request deadline, minus what has already elapsed;
+          * `gateway.attempt_timeout_s`, a per-attempt cap.
+
+        The attempt gets the SMALLER. Taking the minimum is what makes it impossible
+        for a per-attempt timeout to extend the outer deadline -- the failure mode
+        that makes naive "add a timeout" changes dangerous.
+
+        A per-attempt expiry is RETRYABLE: the attempt is recorded with its own
+        `attempt.end` (outcome TIMEOUT, `attempt_timed_out` true) and the retry
+        policy decides what happens next. That is the difference from the outer
+        deadline, which ends the request.
+
+        `attempt_timeout_s` is null (no cap) until the probe measures it, so a
+        project that has not measured its fast path does not silently start cutting
+        healthy requests.
+        """
+        # The floor is deliberate and predates this change: a request whose deadline
+        # is nearly spent still gets ONE real attempt rather than an instant
+        # timeout, so "too late to try" stays distinguishable from "tried and was
+        # slow". Preserved exactly.
+        outer = max(1.0, deadline_s - (self.clock.now() - t_start))
+        if self.attempt_timeout_s is None:
+            return outer, "deadline"
+        if self.attempt_timeout_s <= outer:
+            return self.attempt_timeout_s, "attempt_timeout"
+        return outer, "deadline"
+
     async def call(self, *, scope: RequestScope, step: str, model: str,
                    messages: list[dict], max_tokens: int,
                    deadline_s: float, stream: bool = False,
@@ -279,11 +467,19 @@ class Gateway:
             t_attempt = self.clock.now()
 
             if managed:
-                if self.breaker.state(t_attempt) == "open":
+                # try_admit, not state() == "open": in half-open exactly one probe
+                # is let through and every other request is refused. Checking the
+                # label alone would admit the entire fleet at the moment the
+                # provider is least likely to cope with it.
+                admitted, br_state = self.breaker.try_admit(t_attempt)
+                if not admitted:
+                    if br_state == "open":
+                        raise BreakerOpen(
+                            f"breaker open, reopens in "
+                            f"{self.breaker.opened_at + self.breaker.open_s - t_attempt:.1f}s")
                     raise BreakerOpen(
-                        f"breaker open, reopens in "
-                        f"{self.breaker.opened_at + self.breaker.open_s - t_attempt:.1f}s")
-                self.budget.take(max_tokens, t_attempt)
+                        "breaker half-open, probe already in flight")
+                self.budget[model].take(max_tokens, t_attempt)
 
             attempt = Attempt(
                 attempt_id, scope.req_id, step,
@@ -298,16 +494,100 @@ class Gateway:
             if stream:
                 # A streamed attempt times out on FIRST CONTENT, not on the whole
                 # body: a request that has started answering is not late.
+                s_budget, s_limited_by = self._attempt_budget(deadline_s, t_start)
                 try:
-                    st = await self._streamed_call(payload, t_attempt, deadline_s,
-                                                   t_start)
+                    st = await self._streamed_call(
+                        payload, t_attempt, deadline_s, t_start,
+                        attempt_timeout_s=(s_budget if s_limited_by ==
+                                           "attempt_timeout" else None))
                 except asyncio.TimeoutError:
                     attempt.outcome = Outcome.TIMEOUT
+                    attempt.attempt_timed_out = (s_limited_by == "attempt_timeout")
+                    attempt.timeout_limit = s_limited_by
                     attempt.t_end = self.clock.now()
                     scope.attempt_end(attempt)
                     if managed:
                         self.breaker.record(False, attempt.t_end)
-                    raise DeadlineExceeded("no content before the deadline") from None
+                    # The OUTER deadline ran out waiting for first token. That is
+                    # time we spent upstream, not a budget refusal.
+                    raise UpstreamError("no content before the deadline") from None
+                except StreamProtocolError as e:
+                    # A PROTOCOL fault, not a timeout: the provider (or a proxy)
+                    # sent something unintelligible. Treated as a retryable server
+                    # error -- bytes were never received, so retrying is honest --
+                    # but `protocol_error` on the attempt keeps it distinguishable
+                    # from a 5xx in the log, and the breaker counts it as a failure.
+                    # No new Outcome member: Outcome lives in contracts.py, and the
+                    # existing SERVER_ERROR is the correct severity here.
+                    attempt.outcome = Outcome.SERVER_ERROR
+                    attempt.protocol_error = str(e)[:500]
+                    attempt.t_end = self.clock.now()
+                    # The exception carries the partial timings, because consume()
+                    # raises before control returns and the evidence would otherwise
+                    # never reach the attempt.
+                    _st = getattr(e, "timings", None)
+                    if _st is not None:
+                        attempt.sse_raw = [r.raw for r in _st.raw_lines]
+                        attempt.n_sse_lines = _st.n_raw_lines
+                        attempt.n_sse_malformed = _st.n_malformed
+                        attempt.sse_saw_done = _st.saw_done
+                    scope.attempt_end(attempt)
+                    if managed:
+                        self.breaker.record(False, attempt.t_end)
+                    last_error = f"stream_protocol_error {attempt.protocol_error}"
+                    decision = self._next_delay(attempt, t_start, deadline_s,
+                                                attempt_no, max_attempts, managed)
+                    if decision is None:
+                        raise StreamProtocolError(attempt.protocol_error) from None
+                    wait, why = decision
+                    scope.emit("retry.sleep", attempt_id=attempt.attempt_id,
+                               sleep_s=round(wait, 3), policy=self.policy, why=why)
+                    if wait:
+                        await self.clock.sleep(wait)   # slot released while sleeping
+                    continue
+                except _StreamHTTPError as e:
+                    # A non-200 on a STREAMED request. Before this handler existed the
+                    # exception escaped `call()` entirely: no retry (1 attempt of the
+                    # 3 configured), no breaker record, no attempt.end -- an attempt
+                    # charged and invisible, the same evidence hole as BUG-023
+                    # (BUG-043). The buffered path has handled this shape all along;
+                    # the streamed one simply never reached it.
+                    #
+                    # Classified by STATUS, using the same table as the buffered path,
+                    # so the two cannot drift into different meanings for one code.
+                    attempt.status = e.status
+                    attempt.error_body = (e.text or "")[:2000]
+                    attempt.t_first_byte = self.clock.now()
+                    attempt.t_end = attempt.t_first_byte
+                    _rl = parse_rl_headers(e.headers or {})
+                    attempt.retry_after_s = _rl["retry_after_s"]
+                    attempt.rl_headers_raw = dict(e.headers or {})
+                    if e.status == 429:
+                        attempt.outcome = (Outcome.RATE_LIMITED_DAY
+                                           if (attempt.retry_after_s or 0) >= 60
+                                           else Outcome.RATE_LIMITED_MIN)
+                    elif e.status == 413:
+                        attempt.outcome = Outcome.TOO_LARGE
+                    else:
+                        attempt.outcome = Outcome.SERVER_ERROR
+                    scope.attempt_end(attempt)
+                    if managed:
+                        self.breaker.record(False, attempt.t_end)
+
+                    last_error = (f"{attempt.outcome.value} status={e.status} "
+                                  f"retry_after={attempt.retry_after_s}")
+                    decision = self._next_delay(attempt, t_start, deadline_s,
+                                                attempt_no, max_attempts, managed)
+                    if decision is None:
+                        if attempt.outcome is Outcome.RATE_LIMITED_DAY:
+                            raise DeadlineExceeded(last_error) from None
+                        raise UpstreamError(last_error) from None
+                    wait, why = decision
+                    scope.emit("retry.sleep", attempt_id=attempt.attempt_id,
+                               sleep_s=round(wait, 3), policy=self.policy, why=why)
+                    if wait:
+                        await self.clock.sleep(wait)
+                    continue
                 except asyncio.CancelledError:
                     attempt.outcome = Outcome.CANCELLED
                     attempt.t_end = self.clock.now()
@@ -328,15 +608,27 @@ class Gateway:
                 usage = st.usage or {}
                 attempt.tokens_in = usage.get("prompt_tokens")
                 attempt.tokens_out = usage.get("completion_tokens")
-                # Same reconciliation as the buffered path. Streamed mean *every*
-                # pipeline answer, so skipping it here meant the bucket was only
-                # ever corrected on the probe's non-streamed calls.
+                # Same reconciliation as the buffered path, because a streamed run
+                # must behave like a buffered one. Skipping it meant the bucket was
+                # only ever corrected on the probe's non-streamed calls.
+                # Carry the wire evidence onto the attempt so it reaches the event
+                # log. Without this the tolerant parser would only be observable in
+                # a unit test, which is not where the post-mortem happens.
+                attempt.sse_raw = [r.raw for r in st.raw_lines]
+                attempt.n_sse_lines = st.n_raw_lines
+                attempt.n_sse_malformed = st.n_malformed
+                attempt.sse_saw_done = st.saw_done
                 attempt.rl_headers_raw = st.headers or {}
                 rl = parse_rl_headers(st.headers or {})
                 attempt.retry_after_s = rl["retry_after_s"]
-                self.budget.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
-                self.budget.settle(max_tokens, self.clock.now())
-                self.budget.reconcile(rl.get("remaining_tpm"),
+                # Each model reconciles from ITS OWN response headers. Reconciling a
+                # per-model bucket from another model's headers would let the larger
+                # model's exhaustion throttle the smaller one -- the whole reason for
+                # separate buckets.
+                _b = self.budget[model]
+                _b.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
+                _b.settle(max_tokens, self.clock.now())
+                _b.reconcile(rl.get("remaining_tpm"),
                                       rl.get("remaining_rpd"), self.clock.now())
                 attempt.outcome = Outcome.OK
                 scope.attempt_end(attempt)
@@ -344,17 +636,42 @@ class Gateway:
                     self.breaker.record(True, attempt.t_end)
                 return body
 
+            budget, limited_by = self._attempt_budget(deadline_s, t_start)
             try:
                 resp = await asyncio.wait_for(
                     self.client.post("/chat/completions", json=payload),
-                    timeout=max(1.0, deadline_s - (self.clock.now() - t_start)))
+                    timeout=budget)
             except asyncio.TimeoutError:
                 attempt.outcome = Outcome.TIMEOUT
+                # Which limit fired decides whether this is retryable. A per-attempt
+                # expiry leaves deadline budget on the clock, so `_next_delay` will
+                # normally retry it; the outer deadline does not.
+                attempt.attempt_timed_out = (limited_by == "attempt_timeout")
+                attempt.timeout_limit = limited_by
                 attempt.t_end = self.clock.now()
                 scope.attempt_end(attempt)
-                if managed:
-                    self.breaker.record(False, attempt.t_end)
-                raise DeadlineExceeded("attempt timed out") from None
+                # A per-attempt expiry is RETRYABLE -- that is the whole difference
+                # from the outer deadline. The old code raised DeadlineExceeded
+                # unconditionally, so `attempt_timeout_s` could never have worked
+                # even once it was read: the first slow attempt would have ended the
+                # request. Only the OUTER deadline ends the request here.
+                if limited_by == "attempt_timeout":
+                    last_error = "attempt timed out (per-attempt cap)"
+                    # Retry decision, identical in shape to the HTTP-error path.
+                    decision = self._next_delay(attempt, t_start, deadline_s,
+                                                attempt_no, max_attempts, managed)
+                    if decision is None:
+                        raise UpstreamError(last_error) from None
+                    wait, why = decision
+                    scope.emit("retry.sleep", attempt_id=attempt.attempt_id,
+                               sleep_s=round(wait, 3), policy=self.policy, why=why)
+                    if wait:
+                        await self.clock.sleep(wait)
+                    continue
+                else:
+                    if managed:
+                        self.breaker.record(False, attempt.t_end)
+                    raise UpstreamError("deadline passed") from None
             except asyncio.CancelledError:
                 # H4: the caller abandoned this request. Cancelling the await above
                 # cancels the HTTP request itself, so the provider stops generating
@@ -377,11 +694,12 @@ class Gateway:
             usage = body.get("usage") or {}
             attempt.tokens_in = usage.get("prompt_tokens")
             attempt.tokens_out = usage.get("completion_tokens")
-            self.budget.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
+            _budget = self.budget[model]
+            _budget.learn_limits(rl.get("limit_tpm"), rl.get("limit_rpd"))
             # A response has arrived, so this attempt's reservation is no longer in
             # flight and the header is allowed to speak for it.
-            self.budget.settle(max_tokens, self.clock.now())
-            self.budget.reconcile(rl.get("remaining_tpm"), rl.get("remaining_rpd"),
+            _budget.settle(max_tokens, self.clock.now())
+            _budget.reconcile(rl.get("remaining_tpm"), rl.get("remaining_rpd"),
                                   self.clock.now())
 
             if resp.status_code == 200:
@@ -410,17 +728,24 @@ class Gateway:
             decision = self._next_delay(attempt, t_start, deadline_s,
                                         attempt_no, max_attempts, managed)
             if decision is None:
-                raise DeadlineExceeded(last_error)
+                # A 429 that cannot be retried is still a BUDGET problem only when
+                # it is the provider's DAY limit (RATE_LIMITED_DAY, never retried).
+                # A minute limit we gave up on is a shortage of attempts, not of
+                # budget, and the request did spend tokens -- upstream_error.
+                if attempt.outcome is Outcome.RATE_LIMITED_DAY:
+                    raise DeadlineExceeded(last_error)
+                raise UpstreamError(last_error)
             wait, why = decision
             scope.emit("retry.sleep", attempt_id=attempt.attempt_id,
                        sleep_s=round(wait, 3), policy=self.policy, why=why)
             if wait:
                 await self.clock.sleep(wait)   # slot released while sleeping
 
-        raise DeadlineExceeded(f"{last_error} (gave up after {max_attempts} attempts)")
+        raise UpstreamError(f"{last_error} (gave up after {max_attempts} attempts)")
 
     async def _streamed_call(self, payload: dict, t_attempt: float,
-                             deadline_s: float, t_start: float):
+                             deadline_s: float, t_start: float,
+                             attempt_timeout_s: Optional[float] = None):
         """Open the SSE stream and stamp the three timings as frames arrive.
 
         Times out on FIRST CONTENT, not on the whole body: a request that has begun
@@ -436,13 +761,23 @@ class Gateway:
                 # guaranteed to outlive the context manager.
                 captured.update(dict(resp.headers))
                 if resp.status_code != 200:
+                    # Headers and body both, at raise time: the response is closed
+                    # when the context manager exits, so reading them in the handler
+                    # would mean reading a closed stream.
                     await resp.aread()
-                    raise _StreamHTTPError(resp.status_code, resp.text)
+                    raise _StreamHTTPError(resp.status_code, resp.text,
+                                           dict(resp.headers))
                 async for line in resp.aiter_lines():
                     yield line
 
+        # The FIRST-CONTENT deadline is the outer one, tightened by the per-attempt
+        # cap when there is one. consume() checks it per frame, so a stream that is
+        # open but silent past the cap is abandoned rather than waiting forever.
+        content_deadline = t_start + deadline_s
+        if attempt_timeout_s is not None:
+            content_deadline = min(content_deadline, t_attempt + attempt_timeout_s)
         return await consume(lines(), self.clock, t_attempt,
-                             deadline_at=t_start + deadline_s,
+                             deadline_at=content_deadline,
                              headers=captured)
 
     def _next_delay(self, attempt, t_start: float, deadline_s: float,
@@ -467,7 +802,10 @@ class Gateway:
             return None                              # a day limit never retries
         if elapsed >= deadline_s:
             return None
-        floor = self.cfg.get("gateway.retry_credit_floor", 0.0)
+        # No numeric fallback: config commits 1.0 ("a cold gateway may retry its
+        # first failure"), and a 0.0 default here would have silently disabled that
+        # for the first call after any key rename (BUG-028, caught by the lint).
+        floor = self.cfg.require("gateway.retry_credit_floor")
         if self._retry_credit + floor < 1.0:
             return None                              # global retry budget spent
         wait = attempt.retry_after_s if attempt.retry_after_s is not None else 1.0

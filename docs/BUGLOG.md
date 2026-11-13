@@ -327,6 +327,20 @@ triggered it.
 **Test.** `test_verification_normalises_whitespace_between_draft_and_source`,
 `test_streamed_and_buffered_pipelines_agree`.
 
+## BUG-019 · (number unused — no bug was ever recorded here)
+**Status: NOT A BUG. This number is deliberately left empty.**
+
+The sequence runs BUG-018 → BUG-020 with no BUG-019 entry anywhere in this file or in
+the git history. An audit of the repository could not determine what, if anything,
+BUG-019 was meant to record, so **no entry has been invented for it**. Renumbering
+BUG-020..028 to close the gap was rejected: those numbers are cited from
+`docs/DECISIONS.md`, `docs/STREAMING.md` and several commit messages, and renumbering
+would silently break every one of those references.
+
+If the supervisor has a record of what BUG-019 was, add it here. Otherwise treat the
+gap as a gap: the count of real bugs in this project is the number of headings that
+have a cause, not the highest number used.
+
 ## BUG-020 · L4 instrumentation · "verification cost" was actually generation time
 **Cause.** `user_ttft - model_ttft` was reported as verification cost. But H1 forbids
 showing anything unverified, so the pipeline cannot observe the user-facing answer
@@ -461,3 +475,832 @@ after 25 answers whose provider-reported window was still full. Restored: `4 pas
 `RuntimeError: There is no current event loop` — `asyncio.get_event_loop()` is
 deprecated and does not survive another test closing the loop. `asyncio.run` fixes it.
 **Lesson.** A test that only passes when run alone is not passing.
+
+## BUG-026 · L6 observability · `flush()` waited for the dequeue, not the write
+**Symptom.** `tests/test_events.py::test_backend_is_not_reserved_at_the_shared_channel`
+failed **only inside the full suite**, on the supervisor's machine (Python 3.14.8:
+278 passed, 1 failed, 1 skipped). `read_events(lg.path)` came back empty immediately
+after `lg.flush()`. It passed alone (5×) and across the whole file (26 tests).
+
+**Cause — the hypothesis, confirmed.** `flush()` polled `while not self._q.empty()`.
+That asks whether the queue has work *waiting*, not whether work has been *done*. The
+writer thread can already have dequeued an item and still be serialising it, so the
+queue reads empty with an event in flight; the poll exits, the file is short by one
+line, and the event lands a moment later. Under a full suite the process is busy
+enough for the scheduler to preempt the writer inside that window.
+
+**Proof, three ways.**
+1. *Noise first: not reproducible by load.* 2 000 quiet iterations and 500 iterations
+   with 4 CPU-burning threads and a 200-event-deep queue lost **0** events. The window
+   is microseconds, so luck is the wrong instrument.
+2. *Mechanism, deterministically.* Widening only the writer's `get()` → `write()` gap
+   (a 50 ms `json.dumps`) made the old `flush()` return in **1.1 ms with 0 events
+   readable**, and the event then appeared. If `flush()` waited for the write, widening
+   that gap could not change anything. It changed everything.
+3. *Mutation check.* New regression test
+   `tests/test_flush_race.py::test_flush_waits_for_the_write_not_the_dequeue` widens the
+   same gap and asserts the line is readable after `flush()`. Against the restored old
+   poll it fails `assert 0 == 1`; against the fix it passes.
+
+**Fix.** `queue.SimpleQueue` → `queue.Queue` (unbounded, so `put()` stays non-blocking
+and `emit()` remains an enqueue — `test_emit_does_not_block_caller` still holds at 2000
+emits < 1 s). The writer now calls `task_done()` after each write, in a `finally` so the
+sentinel is covered too, and `flush()` calls `join()` before flushing the handle.
+`close()`-then-`flush()` was re-checked twice for hangs: no hang.
+
+**Why it mattered.** A short read is indistinguishable from a missing event, and every
+report number comes from this file. This is the same failure class as BUG-001/002:
+correct-looking cleanup code and an API that made the wrong thing natural.
+
+**Not fixed here.** `commit 8f0ff4b` (the supervisor's 351-row ledger) is not on origin;
+`docs/TOKEN_LEDGER.md` was left untouched by this change, by instruction.
+
+## BUG-027 · L2 eval · `evaluate()` still scored ambiguous questions as false answers
+**Cause.** `sweep()` was corrected to split answerable (A) / unanswerable (U) /
+ambiguous (T), and `docs/P3_RETRIEVAL.md` was rewritten to say `false_answer` is
+measured against **4**, not 7. But `evaluate()` — the function that *writes*
+`data/eval/retrieval_results.json` — still built its denominator as "every question
+without gold", which is 4 U + 3 T = **7**. So the committed artifact and the page
+that describes it disagreed, and a test pinned only `sweep()`, so nothing caught it.
+
+**Effect, and its direction.** At the committed operating point the stored file says
+`false_answer = 1/7 = 14.3%`; the correct figure is `1/4 = 25.0%`. The bug made the
+system look **better than it is** at exactly the metric the gate is judged on — the
+failure direction that matters, because it flatters the design. A high score on an
+ambiguous question is *correct behaviour* (several answers are defensible), so
+counting it as a fault both inflated the denominator and, worse, blurred the one
+distinction the page spends a section establishing.
+
+**Fix.** `evaluate()` splits the pool exactly as `sweep()` does, returns
+`n_ambiguous` and `ambiguous_admitted` alongside, and never counts T in
+`false_answer`. New test
+`test_evaluate_counts_ambiguous_separately_from_unanswerable` pins `evaluate()`
+(previously only `sweep()` was pinned).
+
+**Proof.** Verified on a synthetic 10-chunk corpus (the PDFs are unavailable in the
+sandbox, so the real index could not be rebuilt). With one admitted ambiguous
+question and one refused unanswerable one: old code reports `false_answer = 0.5`
+(1/2), fixed code reports `0.0` (0/1). Recomputed from the *existing* stored rows,
+the corrected rates are 0.0% / **25.0%** / **25.0%**.
+
+**Not done, deliberately.** `data/eval/retrieval_results.json` was **not**
+regenerated — the corpus is absent here and the instruction was not to regenerate
+data files without it. `docs/P3_RETRIEVAL.md` carries the status box and the
+recomputed table instead, so the page cannot silently claim agreement with a file
+that still disagrees. Regenerate with `python -m scripts.retrieval_eval` once the
+indexes exist.
+
+**Lesson.** Fixing a metric in the function you are reading is not fixing the metric.
+`grep` every producer of the number, and pin the one that writes the artifact.
+
+## BUG-028 · L4 pipeline · a measured threshold had a magic-number fallback
+**Cause.** `pipeline.py` read `cfg.get("retrieval.gate_threshold", 15.0)` while
+`config/relay.yaml` commits **15.86** — a value measured in P3 and justified in D-015.
+Deleting or renaming that one key would have moved every gate decision to 15.0, a
+number nobody measured, with no error and no log line. This is precisely the class
+rule 4 exists to prevent, and it sat in the file that implements the gate.
+
+**Same hazard, second site.** `gateway.retry_credit_floor` was read with a `0.0`
+default against a committed `1.0` ("a cold gateway may retry its first failure").
+With `0.0`, the first failure after a key rename would silently stop being retried.
+
+**Fix.** `cfg.require()` for both. `gateway.request_deadline_s` / `user.patience_s`
+keep documented fallbacks — they are null *by design* until measured — but the
+pipeline now records `deadline_source` (`measured` | `standin`) instead of hiding the
+choice behind `or`, and absent-key handling was made consistent (`cfg.get(k, None)`),
+because `Config.get` raises on a missing key but returns None on a present-and-null one.
+
+**The durable half.** `test_no_numeric_literal_fallback_for_measured_config_keys` is an
+AST walk over `relay/` and `scripts/` that flags any `cfg.get(key, <number>)` where
+`key` is a **non-null number in config that differs from the literal**. Provisional
+keys are listed explicitly in `_PROVISIONAL` with a note, so adding one is a visible
+decision rather than a pattern exemption. Mutation check: restoring
+`cfg.get("retrieval.gate_threshold", 15.0)` makes it fail with
+`('relay/pipeline/pipeline.py', 90, 'retrieval.gate_threshold', 15.0, 15.86)`.
+
+**Lesson.** The lint that existed checked model ids and URLs. The numbers were the
+unwatched half — and a default is a magic number wearing a safety argument.
+
+## BUG-029 · L3 evaluation · two "15.86"s were different thresholds
+**Cause.** `sweep()` derives its candidate thresholds from scores rounded to three
+decimals, compares raw scores against them, then stores `round(t, 3)`. One answerable
+query (A8) has a raw score a hair below the committed `15.86` that rounds to exactly
+`15.86`. So a sweep point displaying **15.86** — which is really A8's own score —
+counts A8 as gated-in, while `evaluate()` comparing against the config value `15.86`
+counts it as refused. Same printed threshold, different answer: **5/20 vs 6/20**.
+
+**Consequence.** `docs/P3_RETRIEVAL.md` quoted `5/20` for all three operating points,
+transcribed from the sweep. The correct column is **6/20, 6/20, 5/20** — which is what
+`retrieval_results.json`'s own `false_abstain` field (0.30, 0.30, 0.25) always said.
+The doc contradicted the artifact it was describing.
+
+**Not affected.** The false-answer rate. No U or T score lies within 0.01 of its
+threshold at any setting, so 0.0% / 25.0% / 25.0% holds under either reading. This
+bug moved a count of *refusals*, not the headline rate.
+
+**Fix.** `sweep()` now stores `exact` (the full-precision value the comparison used)
+alongside the display `threshold`. `scripts/make_tables.py --check` re-derives every
+false-answer figure from the stored rows and fails when a doc row disagrees; it
+catches the historical `12.5%` if reintroduced.
+
+**Why it survived.** Two artifacts disagreed and both were arithmetically correct, so
+neither looked wrong in isolation. The discrepancy was only visible from a third
+place that recomputed from the rows — which is what `make_tables.py` is for.
+
+## BUG-030 · L4 streaming · the SSE parser destroyed the evidence
+**Cause.** `parse_sse_line` returned `None` for every line it did not recognise —
+malformed JSON, an HTML error page injected by a proxy, a truncated frame, a bare
+non-SSE line. The caller could not distinguish "not parseable" from "nothing yet", so
+a corrupted stream and a slow model produced the **same** `TimeoutError`. The bytes on
+the wire were discarded at the first line and were unrecoverable afterwards.
+
+**Why it matters here specifically.** This project's rule is that a number must be
+traceable to a line in a file. A failure whose only record is "no content arrived"
+violates that: the post-mortem cannot answer what the provider sent.
+
+**Fix.** `parse_sse_line_verbose` classifies **every** line and never raises:
+`frame | done | blank | comment | event | malformed`, keeping `raw` verbatim and the
+decode error. `consume()` records lines into a **bounded** buffer (cap 40, plus a
+liveness marker), counts them, and raises `StreamProtocolError` — distinct from
+`TimeoutError` — when a stream opens with garbage or consists only of it. Legal but
+non-data lines (`:` comments, `event:`/`id:`/`retry:` fields) are recognised, so
+tolerance means *understanding more*, not *ignoring more*.
+
+**Reaches the log.** `attempt.end` now carries `sse_raw`, `n_sse_lines`,
+`n_sse_malformed`, `sse_saw_done` and `protocol_error`. Pinning this in a unit test
+alone would not have helped: the post-mortem reads the JSONL, so the evidence had to
+travel there. `tests/test_sse_end_to_end.py` asserts it does.
+
+**Also surfaced.** `saw_done` records whether `[DONE]` arrived. A stream that ends
+without it was cut short; the old code could not tell a complete answer from a
+truncated one.
+
+**Mutation check.** Reverting to a parser that drops `raw` and treats garbage as a
+quiet stream fails 2 of the 19 tolerance tests. **Sandbox:** the stand-in run
+(8 lines, 0 malformed, `saw_done`) ran here and is filed UNCALIBRATED.
+
+## BUG-031 · stand-in · a day-limit 429 advertised a retry 60 s away
+**Cause.** `_r429` had one `day` branch shared by the daily-request and daily-token
+buckets. It hard-coded `retry-after: 60`, always set `type: "requests"`, and always
+emitted `x-ratelimit-reset-tokens` computed from the **minute** bucket — so exhausting
+the *daily* budget told the client to come back in under a minute. The minute and day
+buckets reset 1440 minutes apart, and the header said the wrong one.
+
+**Why it mattered.** The gateway's minute-vs-day classification reads exactly these
+fields. A test of "does a day 429 stop the caller retrying?" was really testing the
+stand-in's arithmetic, and would have passed or failed for reasons unrelated to the
+gateway. Q-09 ("what does a day 429 look like?") could not be approached against an
+instrument that answers the question wrongly by construction.
+
+**Fix.** `_r429(kind)` takes `minute | day_tokens | day_requests` and reports the
+refusing bucket's own reset. The daily-token bucket, which Groq is not believed to
+expose, publishes its counters as `x-standin-*` so they cannot be mistaken for
+provider headers.
+
+**Mutation check.** Restoring `wait = 60.0` for `day_tokens` fails
+`test_day_token_429_does_not_advertise_a_minute_reset`.
+
+**CALIBRATION.** Everything about the *real* service in this area remains UNVERIFIED:
+header names and the per-day reading (Q-04), whether `retry-after` is always present
+(Q-11), and what a real day 429 looks like (Q-09). `docs/STANDIN.md` now carries a
+claim-by-claim table separating what the docs say from what has been observed — which,
+for all of it, is nothing.
+
+## BUG-032 · L3 evaluation · `top_score` was stored rounded while `gated_in` used the raw value
+**Cause.** `evaluate()` computed `gated_in = top >= threshold` from the **raw** score
+but stored `"top_score": round(top, 3)`. The artifact was therefore not internally
+consistent. Two committed rows prove it:
+
+```
+M1 @ 600/100: top_score 15.477, threshold 15.477, gated_in False
+A8 @ 900/150: top_score 15.86,  threshold 15.86,  gated_in False
+```
+
+Both are correct arithmetic — the raw score was a hair under and only *rounded* to the
+threshold — but a consumer recomputing the gate from the stored row gets the opposite
+answer. This is the same defect as BUG-029 one layer down: BUG-029 was `sweep()`
+rounding a **threshold**, this is `evaluate()` rounding a **score**. Fixing one did not
+fix the other, which is why the question was worth asking twice.
+
+**Fix.** `top_score` is now the raw float; `top_score_display` carries the rounded form
+for tables.
+
+**Mutation check — and a false first pass.** The first version of the regression test
+used a round threshold (2.5). Restoring the rounding did **not** fail it, because no
+score in that corpus sat in the gap between a value and its 3dp form near 2.5. The
+test now asserts the corpus even *has* such a gap and places the threshold strictly
+inside it: `disp0 < threshold <= raw0`. With that, restoring `round(top, 3)` fails
+`test_stored_score_reproduces_the_gate_decision`, and the fix passes. Recorded because
+a mutation check that passes is evidence about the test, not the code.
+
+## BUG-033 · stand-in · the TPM bucket was a fixed window and reserved the wrong amount
+**Cause, part 1 — the wrong model.** `Bucket` reset `used` at a boundary and reported
+`reset = reset_at - now`, which right after a request is ~60 s. The transcribed real
+observations show `reset-tokens` of **1.17 s / 1.335 s / 0.96 s**, and in every case
+`reset = deficit / (8000/60)`. The service refills **continuously**; the stand-in
+emptied once a minute. It got `remaining` exactly right (7844) and `reset` wrong by a
+factor of ~50 — and `reset` is the number the gateway uses to decide when to retry.
+
+**Cause, part 2 — the wrong amount.** The stand-in reserved `max_tokens` alone.
+Call 1's deficit was 156 = prompt **76** + cap **80**, with only 41 generated, so the
+service reserves prompt + cap and reserves the cap in full. Charging cap only made the
+stand-in advertise remaining 7920 against the service's 7844 — same order, wrong
+number, which is how a wrong model survives a spot check.
+
+**Cause, part 3 — headers taken after the sleep.** Even with the reservation fixed, the
+advertised remaining came out cap-only because headers were computed *after* the TTFT
+sleep, by which time ~24 tokens had already refilled and cancelled the prompt half.
+The observation `reset 1.17 s = 156/133.3` exactly implies the advertised deficit is the
+reservation **undecayed**, so the snapshot is now taken at reservation time.
+
+**Fix.** `RefillBucket` (continuous refill, `reset = deficit / rate`), reservation =
+`prompt + cap`, rate-limit snapshot at reservation. `standin.refund_unused_cap`
+(default `false`, matching the observation) makes the refund an explicit switch:
+Q-06 is settled for *reservation* by n=4 but the refund branch was never isolated.
+
+**Evidence.** `tests/test_standin_observed.py` (7 tests) feeds the four transcribed
+points to the bucket and also **records the refutation** of the fixed-window model, so
+the change cannot be quietly reverted by someone who assumes a bucket is a window.
+`runs/standin/refill_bucket.json` (UNCALIBRATED) shows the stand-in's residual
+`7896` vs `7844` is fully explained by `len(json)//4 = 24` versus a real 76-token
+prompt — the documented tokenizer difference, not a bucket error.
+
+## BUG-034 · L4 streaming · `StreamProtocolError` had no handler, so the evidence died at the raise
+**Cause.** 5c introduced `StreamProtocolError` and the tolerant parser, but *nothing in
+the gateway caught it*. Two consequences: the exception escaped `Gateway.call()` as an
+unhandled error instead of a terminal reply, and — worse — no `attempt.end` was written
+for the failing attempt, so the offending bytes the parser had carefully retained were
+discarded at the moment they became useful.
+
+**Fix.** The gateway now handles it alongside the HTTP-error path: outcome
+`SERVER_ERROR` (retryable, and deliberately **not** `TIMEOUT` — a wrong-looking stream
+and a slow model want different responses), breaker records a failure, `_next_delay`
+applies so the deadline still binds, and the error propagates only when no retry is
+available. `StreamProtocolError` carries its partial `StreamTimings`, because
+`consume()` raises before control returns and the attempt would otherwise never see
+them.
+
+**No new `Outcome` member.** `Outcome` lives in `contracts.py`; `SERVER_ERROR` is the
+right severity and `protocol_error` keeps it distinguishable in the log.
+
+**Also.** `usage_from()` now checks `x_groq.usage` as well as top-level `usage`
+(UNVERIFIED location, from memory). A wrong lookup makes `tokens_in/out` null and the
+TPM reconciliation a silent no-op, so both are accepted, top-level first.
+
+**Groq-shaped stream.** A test pins the real shape — role chunk first, **reasoning
+deltas before content**, no usage chunk, then `[DONE]` — as a valid, complete stream
+with `n_malformed == 0`. Reasoning deltas must not become `model_ttft`: the first
+*content* token is the honest one, or TTFT is measured against the start of the
+thinking block and flatters the system.
+
+**Mutation check.** Removing the handler fails 2 of 3 tests.
+
+## BUG-035 · L4 gateway · `attempt_timeout_s` was read by nobody, and could not have worked
+**Cause, part 1.** `gateway.attempt_timeout_s` was declared in `config/relay.yaml` with
+a comment saying the P1 probe would set it. **No code read it.** A configuration key
+that nothing consumes is worse than a missing feature: it reads as implemented.
+
+**Cause, part 2 — the reason reading it would not have been enough.** The buffered
+attempt's `TimeoutError` handler ended with `raise DeadlineExceeded(...)`
+*unconditionally*. So even once the value was plumbed through, the **first** slow
+attempt would have terminated the request: a per-attempt timeout would have behaved
+exactly like an outer deadline. The feature is not "add a timeout", it is "make one
+kind of expiry retryable and the other terminal", and only the second half changes
+behaviour.
+
+**Fix.** `_attempt_budget()` returns `min(remaining deadline, attempt_timeout_s)` and
+says which limit produced it. Taking the minimum is what makes it impossible for a
+per-attempt cap to *extend* the outer deadline. On expiry, `timeout_limit` decides:
+`attempt_timeout` → run `_next_delay` and retry; `deadline` → raise as before. Each
+expiry writes its own `attempt.end` with `attempt_timed_out` and `timeout_limit`, so a
+retry storm cannot masquerade as normal traffic.
+
+**Preserved.** The pre-existing `max(1.0, …)` floor: a nearly-spent deadline still gets
+one real attempt rather than an instant timeout. I removed it by accident mid-change,
+caught it by diffing against the old line, and put it back.
+
+**Config.** `attempt_timeout_s` stays **null** — no per-attempt cap until the probe
+measures the fast path's p99. An invented value would silently cut healthy requests,
+and that is not a failure this project could detect after the fact.
+
+**Sandbox.** `STANDIN_HANG_S=30`, cap 0.5 s: 2 attempts, each with its own
+`attempt.end`, both `attempt_timed_out=True`, one `retry.sleep`, then a clean
+surface. Filed UNCALIBRATED — 0.5 s exercises the mechanism, it is not a recommendation.
+
+## BUG-036 · L4 gateway · one shared budget for every model
+**Cause.** `Gateway` held a single `Budget` built from `models.small.tpm/rpd`. Every
+model id drew from it. `models.buckets_separate_per_model` existed in
+`config/relay.yaml` and was read by nothing — the same pattern as BUG-035.
+
+**Why one shared bucket is the wrong default.** It fails in the *expensive*
+direction: exhausting the large model refuses calls to the small one, so the caller is
+told there is no budget when there is. A shared bucket cannot "lose" capacity by being
+too generous; it loses it by refusing requests that would have succeeded.
+
+**Fix.** `BudgetBook` holds one `Budget` per model id, and each reconciles from its own
+response headers. `buckets_separate_per_model` is honoured for `true`/`false`.
+**`null` resolves to separate**, and the reasoning is stated in the class: when the
+answer is unmeasured, prefer the assumption that fails loudly rather than the one that
+silently refuses capacity.
+
+**UNVERIFIED, and labelled as such.** Whether Groq's per-model buckets are genuinely
+independent has never been observed — `buckets_separate_per_model` stays `null` until
+the probe's `buckets` mode exhausts one model and watches the other's headers. The
+class docstring says UNVERIFIED and names the key, and a test asserts both survive.
+
+**Back-compat.** Legacy `gw.budget.tpm_used` reads resolve to the most recently used
+model's bucket, because before this change there was exactly one bucket and that is
+what such a read meant. `__getattr__` only fires when normal lookup fails, so real
+attributes always win.
+
+**Caught by the existing lint.** My first version hard-coded a model id as the default
+bucket key; `test_no_hardcoded_model_or_url_in_package` failed and the id now comes
+from `models.small.id`.
+
+**Mutation check.** Forcing `for_model()` to always return the shared bucket fails 2 of
+6 tests.
+
+## BUG-037 · L6 pipeline · no cache, no coalescing, and a naive version of either is a bug
+**Missing, not broken.** The pipeline ran once per question, every time. Nothing was
+cached, and two concurrent identical questions each ran a full pipeline: two drafts,
+two verifications, two bills.
+
+**Two designs that would have been wrong, and why the chosen one is not.**
+
+1. *Cache keyed on the question.* An answer produced by a different index, a different
+   `top_k`, or a different prompt would be served as this one, and nothing downstream
+   could detect it. The key here includes the normalised question **plus** index id,
+   `top_k`, both model ids and a `prompt_version`, and a test asserts that changing
+   any one of them produces a different key.
+
+2. *Cancel the shared run when any waiter leaves.* That makes the system's behaviour
+   depend on its least patient caller: one impatient user kills the request for
+   everyone sharing it. Coalescing is refcounted, and **only the last departure
+   cancels**. Pinned by `test_one_follower_abandoning_does_not_cancel_the_others` and
+   `test_last_waiter_abandoning_cancels_the_pipeline`.
+
+**Only `VerifiedAnswer` and `NoEvidence` are cached.** `PassagesOnly(budget_gone)` is
+a statement about *our* state at that instant; caching it would convert a transient
+shortage into a durable refusal that outlives the shortage. An unverified answer is
+also the one thing this project must never replay as a result.
+
+**Test-visible evidence.** `cache_hit` and `coalesced_follower` are on the returned
+value *and* emitted to the event log. The 20-question burst is asserted there — one
+leader, 19 followers — because the event log is what a post-mortem reads, and a
+counter only proves an object's internal bookkeeping.
+
+**A bug found in my own first draft.** The leader never decremented the waiter count,
+so the refcount could never reach zero and the pipeline could never be cancelled at
+all — abandonment would have looked implemented and been dead. Fixed to exactly one
+`leave` per waiter on every path.
+
+**Mutation checks.** Cancelling on any departure fails the "one follower leaving"
+test; caching every terminal fails the "only verified" test.
+
+**UNMEASURED.** `ttl_s: 900` is a placeholder with no basis: how long an answer stays
+valid depends on the corpus, which changes only when papers change. The stand-in run
+used no model at all, so it measures the mechanism and **not** any token saving.
+
+## BUG-038 · L5 admission · no queue at all, and "reject when full" is a trap
+**Missing.** `gateway.queue_max` was null and read by nothing. Every request went
+straight to a model call; nothing bounded concurrency and nothing could shed load
+before spending a token.
+
+**The trap.** The obvious implementation of "reject when full" is a bare rejection --
+return `None`, or an HTTP 429 with no body. That violates the project's terminal rule:
+a dropped request leaves **no terminal event**, and a post-mortem cannot distinguish
+it from a crash. It also gives the caller no way to tell "retry shortly" from "this
+will never work".
+
+**Chosen behaviour.** A shed request gets `PassagesOnly(queue_full)` — the passages
+that would have answered, at **zero tokens**, with the reason recorded. Two shed
+reasons are distinguished: `queue_full` (no room) and `would_wait_past_deadline`
+(the expected wait exceeds the caller's remaining patience). The second refuses
+**before** queueing, so a request never spends its remaining patience to reach a
+refusal it could have had immediately.
+
+**Expected wait, not depth.** A queue of depth 3 is harmless at 40 ms per request and
+fatal at 30 s. The check converts depth into expected wait using a moving average of
+observed service time, and compares that against the deadline.
+
+**Two bugs found by my own tests.**
+1. `release()` freed the slot and the waiter re-incremented it. Between those two
+   points another `acquire()` could see a free worker and take it — the queue
+   over-admitted. The slot is now **transferred** in `release()` and the waiter does
+   not increment.
+2. My first `expected_wait_s` returned 0 for interactive requests regardless of depth,
+   so a deep queue predicted no wait. Priority decides ordering among the queued; it
+   cannot erase work already occupying the workers.
+
+**`queue_max: null` does not become 0.** A capacity of 0 sheds every request as
+`queue_full` — a production outage wearing the costume of a safety default. Null
+resolves to a named provisional 32 and `capacity_was_provisional` is True so the log
+can say so.
+
+**Sandbox.** Forced to capacity 2 / 1 worker: 5 further requests → 5 shed as
+`passages_only(queue_full)`, 5 terminals, **0 dropped without a terminal**, all 0
+tokens. UNCALIBRATED — `workers`, `queue_max` and `service_estimate_s` are all
+unmeasured.
+
+## BUG-039 · L6 pipeline · the ladder existed only as config keys
+**Missing.** `ladder:` had `l1_tpm_remaining_frac`, `l1_queue_wait_s`,
+`l2_max_tokens_scale` — and no code computed a level from any of them. L0/L3 existed
+implicitly (normal operation, and running out of budget); L1/L2 did not exist at all.
+
+**Built as one function.** `compute_level(BudgetState, LadderConfig) -> Level`. One
+place decides, so the level can be logged and tested; scattering "if we are short,
+reduce X" through the pipeline is how a system ends up degrading three different ways
+depending on which path ran.
+
+**A boundary bug I introduced and then made impossible.** My first `compute_level`
+used `< l1_trigger * 2` for L1 and put L2 at `< l1_trigger`. That silently moved
+**both** boundaries: the configured 0.25 would have degraded at 0.50, and the
+configured number would have meant something nobody had written down. L1 now triggers
+exactly at the configured fraction, L2 has its **own key**
+(`l2_tpm_remaining_frac`) rather than a second invented multiple, and two tests place
+the input just either side of each configured boundary so the doubling cannot return.
+
+**`None` is UNKNOWN, not "plenty" and not "empty".** An unobserved budget falls
+through to L0 with a reason that says so — but queue pressure is *observed*, so it can
+still degrade a request whose budget was never seen. Pretending an unseen number is
+healthy is how a system is confident right up to the moment it stops.
+
+**Provisional thresholds name themselves.** Every null key resolves to a value in
+`PROVISIONAL` and the list is emitted on the event (`ladder_provisional`), so the log
+can never claim a measured trigger it did not have. `l2_max_tokens_scale` is null in
+config, so it is the one that reports as provisional today.
+
+**Sandbox.** Boundary walk at 0.90 / 0.30 / 0.2499 / 0.10 / 0.019 / 0.0 plus queue-only
+cases, all matching the configured boundaries. UNCALIBRATED — the thresholds are
+exercised, not justified.
+
+## BUG-040 · L6 pipeline · the large model was configured and never called
+**Cause.** `models.large.id` was set in config and referenced by **no code path**.
+Every step — the only step, `draft` — used `models.small.id`. The cascade therefore
+did not exist, and the "two models" in the report would have been a configuration
+line rather than a behaviour.
+
+**Built.** `model_for(step, level, cfg)` is the single routing function:
+`draft` → large at L0, `rewrite`/`verify` → small always, and at L1 and above
+**everything** → small.
+
+**The order is the design.** The ladder check comes **first**. A cascade that only
+looks at the step — "draft goes to large" — passes a per-step test and is wrong,
+because at L1 it would send the draft to the large model and undo the level just
+chosen. A mutation moving the ladder check after the step routing fails
+`test_everything_goes_to_small_at_l1_and_above`.
+
+**An unknown step raises.** Defaulting a typo to the small model looks like working
+code and quietly downgrades quality.
+
+**Depends on item B, and says so.** With a shared bucket, routing from large to small
+moves no budget — the cascade would be a comment, not a control. `cascade_effective()`
+returns False when `buckets_separate_per_model` is False, and the value is emitted on
+every routing event, so the report cannot claim a saving that did not occur. Q-03 is
+still OPEN, so **the saving is UNVERIFIED today**.
+
+**Not yet built.** `rewrite` and `verify` are routed correctly but do not exist as
+pipeline steps — only `draft` is called. The routing table is ready for them; the
+steps are item G's neighbourhood and the brief's "corrective RAG".
+
+**Sandbox.** Routing table at L0/L1/L2 for all three steps. UNCALIBRATED; no model was
+called, and `draft_large_at_l0` is UNMEASURED.
+
+## BUG-041 · L6 pipeline · `llm_verify` was configuration with no behaviour
+**Missing.** `pipeline.llm_verify` had two budget thresholds
+(`min_tpm_remaining_frac`, `min_tpd_remaining_frac`) and no `enabled` flag, no prompt,
+and no code that referenced it. A reader would reasonably assume the feature existed
+and could be tuned; it could only be misconfigured.
+
+**Built, off by default.** `relay/pipeline/selfcheck.py`.
+
+**The direction is the design.** `combine(code_ok, check)` is the only combination
+rule, and the check may only **subtract**:
+
+| code check | self-check | result |
+|---|---|---|
+| pass | pass | pass |
+| pass | **fail** | **fail** (downgraded to PassagesOnly) |
+| pass | skipped / no opinion | pass (code stands) |
+| **fail** | pass | **fail** — never promoted |
+| fail | skipped | fail |
+
+An optional component that can *approve* is an optional component that can bypass
+verification, and H1 would then depend on a model call that is not always made. Both
+mutation directions are caught: allowing promotion, and removing the downgrade.
+
+**Strict parsing.** Only an unambiguous `SUPPORTED`/`UNSUPPORTED` counts. "Yes,
+mostly" returns `None`, and `unclear` citations are **not** endorsements — otherwise
+silence would act as approval.
+
+**Null thresholds do not skip.** An unmeasured budget rule must not behave like a
+configured skip, which would disable a feature nobody chose to disable.
+
+**Cost: ESTIMATE ONLY.** Under the stand-in's `len(chars)/4` tokenization, the check
+adds ~83 prompt + ≤16 completion tokens **per citation**, ~+38% per answer against a
+520-token baseline (`runs/standin/selfcheck_cost.json`, UNCALIBRATED). The real cost
+is **unmeasured** — no Groq call was made, and it is not a tokenizer. The more
+important number, *whether it catches anything the code checks miss*, has not been
+measured at all and cannot be from this sandbox.
+
+**Not wired into `Pipeline.answer()`.** The step is implemented and tested, but
+building the per-citation call path requires the `verify` step that item F routed and
+which does not yet exist as a pipeline stage. Deliberately not claimed as working
+end-to-end.
+
+## BUG-041b · L6 gateway · half-open admitted the whole fleet
+*(numbered 041b to stay next to the item-G entry; this is item H's breaker bug)*
+
+**Missing.** `Breaker.state()` returned `"half-open"`, and the gateway gated with
+`if self.breaker.state(t) == "open": raise`. In half-open the string is `"half-open"`,
+not `"open"`, so **nothing was refused** — every queued request was released at the
+instant the breaker's timeout expired.
+
+**Why it matters more than it looks.** The half-open window is the moment the
+provider has just recovered, or has not. A breaker that releases everything there
+does not protect the provider; it schedules the thundering herd for exactly the
+worst instant and then reports `closed` because the first success resets the count.
+The failure is invisible in a log that only records breaker *states*.
+
+**Fix.** `Breaker.try_admit(now) -> (admitted, state)`, and the gateway uses it.
+Half-open admits exactly one probe; every other arrival is refused with its own
+reason (`breaker half-open, probe already in flight`), distinct from `breaker open`.
+A failed probe re-opens immediately even below `fail_threshold`, because the
+threshold counts consecutive failures on the *closed* path — a probe that failed is
+proof the provider is still down, and waiting for four more is wasted traffic.
+
+**Stand-in, real HTTP** (`runs/standin/breaker_cycle.json`, UNCALIBRATED):
+error_rate=1.0 → opened on the 3rd consecutive 500, calls 4–6 refused, zero requests
+sent. Window expires → 6 concurrent arrivals, **exactly 1 admitted**. Probe succeeds
+→ closed, next 3 admitted. `fail_threshold` / `open_s` are **UNMEASURED**.
+
+## BUG-042 · L6 pipeline · a 500 storm was reported to the user as `budget_gone` — FIXED
+**Found by the item H stand-in.** `DeadlineExceeded` covered four unrelated failures
+and `Pipeline.answer()` mapped every one of them to `reason="budget_gone"`, with the
+message "The model is busy; here are the passages that would answer this."
+
+Observed: phase 1 of the breaker run raised
+`DeadlineExceeded: server_error status=500` on a **10 s deadline that never expired**,
+after a call that took milliseconds. The budget was untouched.
+
+**Fix: the exception is split by CAUSE, not by name.** `DeadlineExceeded` now means
+one thing — a budget was actually refused. Everything that spent tokens and did not
+get an answer is `UpstreamError`.
+
+### The mapping table
+
+| cause | exception | `PassagesOnly.reason` |
+|---|---|---|
+| local TPM reservation refused | `DeadlineExceeded` | `budget_gone` |
+| local RPD reservation refused | `DeadlineExceeded` | `budget_gone` |
+| provider day limit (429, never retried) | `DeadlineExceeded` | `budget_gone` |
+| retries exhausted on 5xx | `UpstreamError` | `upstream_error` |
+| minute-limit 429, retries exhausted | `UpstreamError` | `upstream_error` |
+| per-attempt timeout, not retryable | `UpstreamError` | `upstream_error` |
+| outer deadline, no first content | `UpstreamError` | `upstream_error` |
+| `StreamProtocolError`, retries exhausted | `StreamProtocolError` (pinned, 5c) | `upstream_error` |
+| breaker refused the call | `BreakerOpen` | `breaker_open` |
+| queue refused admission | `Admission` diagnosis | `queue_full` (via `contract_reason`) |
+| our own checks rejected an answer | — | `verify_failed` |
+
+**The minute-limit case is the one worth arguing about.** A 429 we gave up retrying
+is a shortage of *attempts*, not of budget, and the request did spend tokens. Calling
+it `budget_gone` would tell an operator to raise a limit that was not the limit.
+
+### The exact user-facing strings
+
+| reason | text |
+|---|---|
+| `budget_gone` | "I could not spend the budget to answer; here are the passages that would." |
+| `upstream_error` | "The model did not answer this time; here are the passages that would." |
+| `breaker_open` | "The model is unavailable right now; here are the passages that would answer this." |
+
+Every one costs **0 tokens** and still returns the passages. The two non-budget
+strings are asserted to contain neither "budget" nor "token" — a test, not a review.
+The old single sentence ("the model is busy") was accurate for none of the three.
+
+### `send_reply` is still the single exit
+
+Unchanged: `VerifiedAnswer` still cannot be built without `mint_verified`, and
+`send_reply` still asserts `is_reply()`. This change only widens what the caller
+catches **before** calling it — nothing bypasses H1.
+
+### The permitted set, in both places (D-006)
+
+`PASSAGES_ONLY_REASONS` lives in `relay/contracts.py`, and `PassagesOnly.__post_init__`
+**raises** on a reason outside it. `scripts/check_events.py` and `scripts/analyze.py`
+each keep a **re-typed** copy rather than importing, because D-006 exists so a bug in
+the library cannot hide from the checker; the price of duplication is drift, so
+`tests/test_reasons.py::test_the_two_checkers_retype_the_same_set` asserts all three
+agree. Drift now fails a test instead of passing both files.
+
+**Adding the validation found a sixth reason already in use.**
+`would_wait_past_deadline` was being passed to `PassagesOnly` from the queue. It is
+an **admission diagnosis**, not a contract reason, and adding it to the contract
+would have grown the set by a distinction only the log needs. `queue.contract_reason()`
+now maps both diagnoses to `queue_full`, and raises on an unknown one.
+
+### Never cached
+
+`NO` `PassagesOnly` is cacheable, under any reason — `CACHEABLE_TERMINALS` is an
+allowlist (`answered`, `no_evidence`). A reason **blacklist** (`!= "budget_gone"`)
+would have cached `upstream_error` the day it was introduced. Stated in the module
+docstring because the next reason will be added by someone reading that code.
+
+### Mutation checks — both directions
+
+| mutation | expected | result |
+|---|---|---|
+| 5xx raises `DeadlineExceeded` again (old mapping) | the 500-storm test fails | **FAILED** `test_a_500_storm_yields_upstream_error_not_budget_gone` |
+| day-limit 429 raises `UpstreamError` (over-correction) | the day-limit test fails | **FAILED** `test_a_day_limit_429_still_yields_budget_gone` |
+| pipeline maps `UpstreamError` → `budget_gone` | the exact-mapping test fails | **FAILED** `test_the_pipeline_mapping_is_exact` |
+
+The third mutation **passed on the first attempt**: the original test only asserted
+the reason was *a member of the set*, and `budget_gone` is a member. The test was
+weakened by its own generality. It now pins each cause to its reason. Recorded
+because a mutation check that passes is evidence about the test.
+
+## BUG-043 · L4 streaming · a streamed non-200 never reaches the retry logic — OPEN
+**Found while implementing BUG-042, NOT FIXED.**
+
+`_streamed_call` raises the private `_StreamHTTPError` on any non-200. **Nothing
+catches it** — it is raised at `gateway.py:716` and referenced nowhere else.
+
+Measured (`max_attempts=3`, one 500 on the stream path):
+
+```
+RAISED: _StreamHTTPError | stream failed with 500
+HTTP attempts made: 1 | breaker: closed
+```
+
+Three consequences, all wrong:
+
+1. **No retry.** One 500 ends the request even though two attempts remain.
+2. **The breaker never sees it.** A streamed 5xx does not count as a failure, so the
+   breaker stays `closed` while the stream path fails on every request.
+3. **No `attempt.end` for the failing attempt**, so the attempt is charged and
+   invisible — the same evidence hole as BUG-023.
+
+Since `Pipeline.answer()` now catches `StreamProtocolError` and maps it to
+`upstream_error`, the request at least ends with a terminal once this is fixed; but
+today the exception is a **private class** that the pipeline cannot name.
+
+**Not fixed here** because it is a distinct change to the streamed send path and this
+commit is already a contract change. It is the next item after I.
+
+## BUG-044 · P4 stand-in · `/__stats` raised on every call, since BUG-033
+**Found while wiring the run metadata.** The route read `STATE.tpm_bucket.used`, but
+`RefillBucket` — which replaced the fixed-window `Bucket` in BUG-033 — has never had
+a `.used` attribute. Every `GET /__stats` raised `AttributeError` and returned a 500.
+
+**Why it survived:** nothing tested the route, and nothing read it. It is a
+diagnostic endpoint, so the failure was invisible until something actually needed it.
+The thing that needed it is the Q-06 A/B: a run has to record which branch it ran
+under.
+
+**Two wrong fixes on the way.** Assuming all three buckets share an API was wrong
+twice in a row:
+
+* `remaining(now)` on all three — the day and request buckets are fixed-window
+  `Bucket`s and have no `remaining()`.
+* the buckets are genuinely different classes: **TPM is a `RefillBucket`** (continuous
+  refill, the observed behaviour), **day and rpd are `Bucket`s**. The route now uses
+  each class's own API, and says so in a comment.
+
+**Fixed and verified:** `{"calls": 0, "tpm_remaining": 8000, "day_used": 0,
+"rpd_used": 0, "assumptions": {...}}`.
+
+## BUG-045 · P4 stand-in · the Q-06 switch could not be flipped
+**`standin.refund_unused_cap` was read by nothing.**
+
+`StandIn` has the field and the branch that refunds; `build_state()` — the only
+constructor — never passed the value. So the config key changed nothing: **both arms
+of the A/B that settles Q-06 would have been the same arm**, and the two tables would
+have been identical while appearing to compare two hypotheses. That is worse than an
+unimplemented switch, because the result looks like a finding.
+
+Same defect class as items D, E and F: configuration that reads as a working feature.
+
+**Fixed.** `build_state()` passes `bool(CFG.get("standin.refund_unused_cap", False))`,
+and the stand-in reports the value it is running under in `/__stats.assumptions`.
+
+**Verified over real HTTP** (not just the dataclass):
+
+| `refund_unused_cap` | remaining after call 1 | remaining after call 2 |
+|---|---|---|
+| `false` | 7896 | 7819 |
+| `true` | 7936 | 7899 |
+
+The 40-token difference is the completion refund, because the stand-in reserves the
+cap but generates fewer tokens.
+
+## BUG-046 · docs · the Q-06 label claimed an observation that does not exist
+**The label, not the code.** `docs/STANDIN.md` called `refund_unused_cap`'s default
+"**OBSERVED**-consistent, never isolated" and justified it with *"the observed deficit
+carried the full cap even when only 41 of 80 tokens were generated"*.
+
+**That reasoning is about the wrong moment.** The deficit carrying the full cap is the
+**admission-time** reading: it shows the cap is *reserved* up front, which the
+observations do support. It says nothing about whether unused cap is *refunded at
+completion*, which is the question Q-06 asks. The label made an assumption look like a
+finding.
+
+**Corrected** to `ASSUMPTION, OPEN (Q-06) until the supervisor's A/B curl result`, and
+the misleading sentence is gone.
+
+**What the observations actually say about refund is weaker than the old label.**
+Assuming call 2 reserved the same 156 tokens as call 1:
+
+| model | implied reserve for call 2 | miss vs 156 |
+|---|---|---|
+| no refund | 127.3 | ~29 tokens |
+| refund | 166.3 | ~10 tokens |
+
+The 1→2 interval fits refund *slightly* better — and refund is still ~10 tokens out,
+in the direction of *more* than was reserved. **One interval, n=2, one model, one
+prompt shape: INCONCLUSIVE.** The 2→3 interval provides no independent check because
+call 3's reservation is not in the record either.
+
+**The same overclaim was in the test docstrings**, where it would have been read by
+whoever maintains the fixture. `test_unused_cap_is_not_refunded_by_default` is renamed
+to `test_unused_cap_default_is_an_assumption_not_an_observation`, and its docstring now
+says the test guards the *label*, not the physics — it would pass under either
+default.
+
+**Two claims were also being reported as one.** "`reset-tokens` is exact against the
+transcribed deficit" and "calls 2–3 reproduce within 1 % of the *rounded* gaps" are
+different strengths of result. The second is a tolerance check on inputs recorded to
+2 dp, and is the one that would pass if the rate were slightly wrong and the tolerance
+slightly generous. They are now listed separately.
+
+**Provenance corrected.** The source is the probe's own records —
+`runs/probe_20261111T062707Z/single.jsonl`, `runs/probe_20261111T064821Z` — not output
+relayed through `curl`. Those files are not in the tree yet; the supervisor commits
+`calibration/probe/`. Until then the test retypes the values, and
+`test_when_the_probe_records_land_the_values_must_be_read_from_them` **fails as soon as
+any probe jsonl appears**, so the retyped copy cannot quietly outlive the files it was
+transcribed from.
+
+## BUG-043 · L4 streaming · a streamed non-200 never reached the retry logic — FIXED
+**Found while implementing BUG-042.** `_streamed_call` raised the private
+`_StreamHTTPError` on any non-200, and **nothing caught it**. It was raised in one
+place and referenced in no other.
+
+Measured before the fix (`max_attempts=3`, one 500 on the stream path):
+
+```
+RAISED: _StreamHTTPError | stream failed with 500
+HTTP attempts made: 1 | breaker: closed
+```
+
+Three consequences, all wrong:
+
+1. **No retry.** One 500 ended the request with attempts remaining.
+2. **The breaker was blind.** A streamed 5xx never counted as a failure, so a
+   provider failing *only* on the stream path would never trip it.
+3. **No `attempt.end`.** The attempt was charged and invisible — the same evidence
+   hole as BUG-023.
+
+Since BUG-042 the pipeline catches `StreamProtocolError` and maps it to
+`upstream_error`, so a request did at least end with a terminal — but this exception
+was a **private class the pipeline could not name**, so that handler never saw it.
+
+**Fix: the streamed path now handles a non-200 the way the buffered path always has.**
+The handler sits beside the existing `StreamProtocolError` handler and reuses the same
+status table, so a 429 cannot mean one thing streamed and another buffered:
+
+| status | outcome | reason if not retryable |
+|---|---|---|
+| 429 with `retry-after` ≥ 60 s | `rate_limited_day` | `budget_gone` |
+| 429 otherwise | `rate_limited_min` | `upstream_error` |
+| 413 | `too_large` | `upstream_error` |
+| anything else | `server_error` | `upstream_error` |
+
+The exception carries **headers** as well as the body, captured at raise time: the
+response is closed when the stream context manager exits, and `x-ratelimit-*` is the
+only place that model's remaining budget exists.
+
+**Stand-in over real HTTP** (`error_rate=1.0`, `runs/standin/stream_http_error.json`,
+UNCALIBRATED): 2 HTTP attempts, **2 `attempt.end` events**, both `server_error`/500,
+raising `UpstreamError`. Breaker `closed` at threshold 5 after 2 failures — correct.
+
+**One retry, not three, and that is not a bug.** `retry_budget_ratio` 0.1 per call
+against a `retry_credit_floor` of 1.0 affords exactly one retry. A test that asserted
+three attempts would have encoded the wrong policy.
+
+**Mutation checks:**
+
+| mutation | result |
+|---|---|
+| remove the `_StreamHTTPError` handler (the old code) | **9 of 11 fail** — `_StreamHTTPError` escapes |
+| handle it but raise instead of `continue` (no retry) | 3 fail, incl. `test_a_streamed_500_is_RETRIED_not_fatal` |
+
+**Two test-design traps found by these tests, both of which would have made the
+suite pass without the fix:**
+
+* a stub `RequestScope` whose `attempt_end` was a no-op made every "attempt.end was
+  written" assertion **vacuous** — the events could not exist either way. The tests
+  now use the real `RequestScope`.
+* `deadline_s=0.5` with a 500's fallback wait of 1.0 s makes "no retry" the *correct*
+  outcome, so `test_..._is_RETRIED` passed against the bug. Retry tests now leave
+  room for the wait.

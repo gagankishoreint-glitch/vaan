@@ -162,6 +162,41 @@ They are now reported as three separate columns. `false_answer` is measured agai
 **4**, not 7, so the committed 15.86 admits 1 of 4 genuinely unanswerable questions
 rather than 1 of 7. The old figure understated the rate by 75%.
 
+> **Status of the stored artifact (BUG-027).** This correction was made in `sweep()`
+> only. `evaluate()` — the function that writes `data/eval/retrieval_results.json` —
+> still counted the 3 ambiguous questions in the `unanswerable` denominator, so the
+> committed file reports `false_answer = 0.1429` (1/**7**) while this page says 1/**4**.
+> The page is right and the code was wrong. `evaluate()` now splits A/U/T like
+> `sweep()`, and a test pins it. The artifact has **not** been regenerated: the PDFs
+> were absent in the sandbox where the fix was made, and the instruction was not to
+> regenerate data files without the corpus. Recomputing from the stored rows gives:
+>
+> | setting | threshold | A refused | U admitted | T admitted | false_answer |
+> |---|---|---|---|---|---|
+> | 600/100 | 15.477 | 6/20 | 0/4 | 0/3 | **0/4 = 0.0%** |
+> | 900/150 | 15.86 | 6/20 | 1/4 | 0/3 | **1/4 = 25.0%** |
+> | 1200/200 | 15.876 | 5/20 | 1/4 | 0/3 | **1/4 = 25.0%** |
+>
+> **Correction.** The A-refused column read `5/20` on all three rows in the first
+> version of this table. That was taken from the *sweep*'s threshold rows, which
+> compare **rounded** scores; `evaluate()` — the function that writes
+> `retrieval_results.json`, and the one that matches what the pipeline actually does
+> — compares **raw** scores. One query (A8) has a raw score a hair under 15.86 that
+> rounds to exactly 15.86, so the two disagree 5 vs 6 at the committed setting.
+> The stored summary fields (`false_abstain` = 0.30, 0.30, 0.25) were always right;
+> the transcription into this table was not. `sweep()` now records the full-precision
+> `exact` threshold so this cannot recur, and the committed sweep artifact is flagged
+> as pre-fix by `tests/test_make_tables.py` until the corpus is rebuilt.
+>
+> The **false-answer rate is unaffected**: no U or T score sits within 0.01 of its
+> threshold, so 0.0% / 25.0% / 25.0% holds at either reading.
+>
+> So the corrected false-answer rate at the committed operating point is **25.0%,
+> not the 14.3% stored and not the 12.5% below** — every one of those was computed
+> over the wrong denominator. The conclusion does not move: one threshold cannot
+> separate the classes. Regenerate the artifact to make the file agree with this
+> table.
+
 At 1200/200 the split changes the picture further: the best point is **14.04 with 2
 total errors** (1/20 refused, 1/4 admitted) — better than 900/150's best of 3.
 
@@ -187,7 +222,9 @@ fix, not a better threshold.
 The first run reported `false_answer = 46.2%`. That was wrong, and the cause was
 mine: I had used `gold: []` as a placeholder for "not verified yet", so six
 answerable questions were counted as unanswerable. After locating and verifying
-the real gold chunks, the true figure is 12.5%.
+the real gold chunks, the figure over the **unanswerable-only** denominator is
+**25.0% (1 of 4)** — see the BUG-027 status box above; the 12.5% quoted here earlier
+was itself computed over the wrong denominator.
 
 Recorded because it is the same class of error as BUG-003/004: a value that means
 "unknown" silently behaving as a value that means "none".
