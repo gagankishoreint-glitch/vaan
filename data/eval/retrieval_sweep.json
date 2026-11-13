@@ -1,8 +1,9 @@
 {
-  "setting": "900/150",
+  "setting": "1200/200",
   "points": [
     {
-      "threshold": 8.817,
+      "exact": 8.83686,
+      "threshold": 8.837,
       "false_abstain": 0,
       "n_answerable": 20,
       "false_abstain_frac": 0.0,
@@ -14,7 +15,8 @@
       "total_errors": 4
     },
     {
-      "threshold": 11.774,
+      "exact": 11.291713,
+      "threshold": 11.292,
       "false_abstain": 0,
       "n_answerable": 20,
       "false_abstain_frac": 0.0,
@@ -26,7 +28,8 @@
       "total_errors": 4
     },
     {
-      "threshold": 12.405,
+      "exact": 12.143844,
+      "threshold": 12.144,
       "false_abstain": 0,
       "n_answerable": 20,
       "false_abstain_frac": 0.0,
@@ -38,7 +41,8 @@
       "total_errors": 4
     },
     {
-      "threshold": 12.478,
+      "exact": 12.254332,
+      "threshold": 12.254,
       "false_abstain": 1,
       "n_answerable": 20,
       "false_abstain_frac": 0.05,
@@ -50,79 +54,86 @@
       "total_errors": 4
     },
     {
-      "threshold": 12.923,
+      "exact": 12.615784,
+      "threshold": 12.616,
       "false_abstain": 1,
       "n_answerable": 20,
       "false_abstain_frac": 0.05,
-      "false_answer": 2,
+      "false_answer": 3,
       "n_unanswerable": 4,
-      "false_answer_frac": 0.5,
-      "ambiguous_admitted": 1,
-      "n_ambiguous": 3,
-      "total_errors": 3
-    },
-    {
-      "threshold": 13.303,
-      "false_abstain": 1,
-      "n_answerable": 20,
-      "false_abstain_frac": 0.05,
-      "false_answer": 2,
-      "n_unanswerable": 4,
-      "false_answer_frac": 0.5,
-      "ambiguous_admitted": 1,
-      "n_ambiguous": 3,
-      "total_errors": 3
-    },
-    {
-      "threshold": 14.264,
-      "false_abstain": 2,
-      "n_answerable": 20,
-      "false_abstain_frac": 0.1,
-      "false_answer": 2,
-      "n_unanswerable": 4,
-      "false_answer_frac": 0.5,
+      "false_answer_frac": 0.75,
       "ambiguous_admitted": 1,
       "n_ambiguous": 3,
       "total_errors": 4
     },
     {
-      "threshold": 14.499,
-      "false_abstain": 2,
+      "exact": 12.914564,
+      "threshold": 12.915,
+      "false_abstain": 1,
       "n_answerable": 20,
-      "false_abstain_frac": 0.1,
-      "false_answer": 1,
+      "false_abstain_frac": 0.05,
+      "false_answer": 2,
       "n_unanswerable": 4,
-      "false_answer_frac": 0.25,
+      "false_answer_frac": 0.5,
       "ambiguous_admitted": 1,
       "n_ambiguous": 3,
       "total_errors": 3
     },
     {
-      "threshold": 14.82,
-      "false_abstain": 2,
+      "exact": 13.791511,
+      "threshold": 13.792,
+      "false_abstain": 1,
       "n_answerable": 20,
-      "false_abstain_frac": 0.1,
+      "false_abstain_frac": 0.05,
       "false_answer": 1,
       "n_unanswerable": 4,
       "false_answer_frac": 0.25,
       "ambiguous_admitted": 0,
       "n_ambiguous": 3,
-      "total_errors": 3
+      "total_errors": 2
     },
     {
-      "threshold": 14.845,
-      "false_abstain": 4,
+      "exact": 14.037131,
+      "threshold": 14.037,
+      "false_abstain": 1,
       "n_answerable": 20,
-      "false_abstain_frac": 0.2,
+      "false_abstain_frac": 0.05,
       "false_answer": 1,
       "n_unanswerable": 4,
       "false_answer_frac": 0.25,
       "ambiguous_admitted": 0,
       "n_ambiguous": 3,
-      "total_errors": 5
+      "total_errors": 2
     },
     {
-      "threshold": 15.467,
+      "exact": 14.53626,
+      "threshold": 14.536,
+      "false_abstain": 3,
+      "n_answerable": 20,
+      "false_abstain_frac": 0.15,
+      "false_answer": 1,
+      "n_unanswerable": 4,
+      "false_answer_frac": 0.25,
+      "ambiguous_admitted": 0,
+      "n_ambiguous": 3,
+      "total_errors": 4
+    },
+    {
+      "exact": 15.006624,
+      "threshold": 15.007,
+      "false_abstain": 3,
+      "n_answerable": 20,
+      "false_abstain_frac": 0.15,
+      "false_answer": 1,
+      "n_unanswerable": 4,
+      "false_answer_frac": 0.25,
+      "ambiguous_admitted": 0,
+      "n_ambiguous": 3,
+      "total_errors": 4
+    },
+    {
+      "exact": 15.124916,
+      "threshold": 15.125,
       "false_abstain": 5,
       "n_answerable": 20,
       "false_abstain_frac": 0.25,
@@ -134,7 +145,8 @@
       "total_errors": 6
     },
     {
-      "threshold": 15.86,
+      "exact": 15.876465,
+      "threshold": 15.876,
       "false_abstain": 5,
       "n_answerable": 20,
       "false_abstain_frac": 0.25,
@@ -146,7 +158,8 @@
       "total_errors": 6
     },
     {
-      "threshold": 15.93,
+      "exact": 15.916376,
+      "threshold": 15.916,
       "false_abstain": 7,
       "n_answerable": 20,
       "false_abstain_frac": 0.35,
@@ -158,55 +171,60 @@
       "total_errors": 8
     },
     {
-      "threshold": 16.269,
-      "false_abstain": 7,
-      "n_answerable": 20,
-      "false_abstain_frac": 0.35,
-      "false_answer": 1,
-      "n_unanswerable": 4,
-      "false_answer_frac": 0.25,
-      "ambiguous_admitted": 0,
-      "n_ambiguous": 3,
-      "total_errors": 8
-    },
-    {
-      "threshold": 17.276,
+      "exact": 16.594727,
+      "threshold": 16.595,
       "false_abstain": 8,
       "n_answerable": 20,
       "false_abstain_frac": 0.4,
-      "false_answer": 0,
+      "false_answer": 1,
       "n_unanswerable": 4,
-      "false_answer_frac": 0.0,
-      "ambiguous_admitted": 0,
-      "n_ambiguous": 3,
-      "total_errors": 8
-    },
-    {
-      "threshold": 17.47,
-      "false_abstain": 9,
-      "n_answerable": 20,
-      "false_abstain_frac": 0.45,
-      "false_answer": 0,
-      "n_unanswerable": 4,
-      "false_answer_frac": 0.0,
+      "false_answer_frac": 0.25,
       "ambiguous_admitted": 0,
       "n_ambiguous": 3,
       "total_errors": 9
     },
     {
-      "threshold": 18.493,
-      "false_abstain": 10,
+      "exact": 16.72811,
+      "threshold": 16.728,
+      "false_abstain": 9,
       "n_answerable": 20,
-      "false_abstain_frac": 0.5,
-      "false_answer": 0,
+      "false_abstain_frac": 0.45,
+      "false_answer": 1,
       "n_unanswerable": 4,
-      "false_answer_frac": 0.0,
+      "false_answer_frac": 0.25,
       "ambiguous_admitted": 0,
       "n_ambiguous": 3,
       "total_errors": 10
     },
     {
-      "threshold": 19.27,
+      "exact": 17.620533,
+      "threshold": 17.621,
+      "false_abstain": 9,
+      "n_answerable": 20,
+      "false_abstain_frac": 0.45,
+      "false_answer": 1,
+      "n_unanswerable": 4,
+      "false_answer_frac": 0.25,
+      "ambiguous_admitted": 0,
+      "n_ambiguous": 3,
+      "total_errors": 10
+    },
+    {
+      "exact": 17.777703,
+      "threshold": 17.778,
+      "false_abstain": 10,
+      "n_answerable": 20,
+      "false_abstain_frac": 0.5,
+      "false_answer": 1,
+      "n_unanswerable": 4,
+      "false_answer_frac": 0.25,
+      "ambiguous_admitted": 0,
+      "n_ambiguous": 3,
+      "total_errors": 11
+    },
+    {
+      "exact": 18.60193,
+      "threshold": 18.602,
       "false_abstain": 11,
       "n_answerable": 20,
       "false_abstain_frac": 0.55,
@@ -218,7 +236,8 @@
       "total_errors": 11
     },
     {
-      "threshold": 19.365,
+      "exact": 19.856685,
+      "threshold": 19.857,
       "false_abstain": 12,
       "n_answerable": 20,
       "false_abstain_frac": 0.6,
@@ -230,7 +249,8 @@
       "total_errors": 12
     },
     {
-      "threshold": 20.521,
+      "exact": 20.51591,
+      "threshold": 20.516,
       "false_abstain": 12,
       "n_answerable": 20,
       "false_abstain_frac": 0.6,
@@ -242,19 +262,21 @@
       "total_errors": 12
     },
     {
-      "threshold": 20.961,
-      "false_abstain": 14,
+      "exact": 20.518947,
+      "threshold": 20.519,
+      "false_abstain": 13,
       "n_answerable": 20,
-      "false_abstain_frac": 0.7,
+      "false_abstain_frac": 0.65,
       "false_answer": 0,
       "n_unanswerable": 4,
       "false_answer_frac": 0.0,
       "ambiguous_admitted": 0,
       "n_ambiguous": 3,
-      "total_errors": 14
+      "total_errors": 13
     },
     {
-      "threshold": 22.296,
+      "exact": 22.021832,
+      "threshold": 22.022,
       "false_abstain": 15,
       "n_answerable": 20,
       "false_abstain_frac": 0.75,
@@ -266,31 +288,34 @@
       "total_errors": 15
     },
     {
-      "threshold": 29.023,
-      "false_abstain": 15,
+      "exact": 28.447716,
+      "threshold": 28.448,
+      "false_abstain": 16,
       "n_answerable": 20,
-      "false_abstain_frac": 0.75,
+      "false_abstain_frac": 0.8,
       "false_answer": 0,
       "n_unanswerable": 4,
       "false_answer_frac": 0.0,
       "ambiguous_admitted": 0,
       "n_ambiguous": 3,
-      "total_errors": 15
+      "total_errors": 16
     },
     {
-      "threshold": 33.787,
-      "false_abstain": 17,
+      "exact": 36.376609,
+      "threshold": 36.377,
+      "false_abstain": 16,
       "n_answerable": 20,
-      "false_abstain_frac": 0.85,
+      "false_abstain_frac": 0.8,
       "false_answer": 0,
       "n_unanswerable": 4,
       "false_answer_frac": 0.0,
       "ambiguous_admitted": 0,
       "n_ambiguous": 3,
-      "total_errors": 17
+      "total_errors": 16
     },
     {
-      "threshold": 34.603,
+      "exact": 37.304638,
+      "threshold": 37.305,
       "false_abstain": 18,
       "n_answerable": 20,
       "false_abstain_frac": 0.9,
@@ -302,19 +327,8 @@
       "total_errors": 18
     },
     {
-      "threshold": 47.734,
-      "false_abstain": 18,
-      "n_answerable": 20,
-      "false_abstain_frac": 0.9,
-      "false_answer": 0,
-      "n_unanswerable": 4,
-      "false_answer_frac": 0.0,
-      "ambiguous_admitted": 0,
-      "n_ambiguous": 3,
-      "total_errors": 18
-    },
-    {
-      "threshold": 48.748,
+      "exact": 46.504787,
+      "threshold": 46.505,
       "false_abstain": 19,
       "n_answerable": 20,
       "false_abstain_frac": 0.95,
@@ -324,42 +338,55 @@
       "ambiguous_admitted": 0,
       "n_ambiguous": 3,
       "total_errors": 19
+    },
+    {
+      "exact": 48.273467,
+      "threshold": 48.273,
+      "false_abstain": 20,
+      "n_answerable": 20,
+      "false_abstain_frac": 1.0,
+      "false_answer": 0,
+      "n_unanswerable": 4,
+      "false_answer_frac": 0.0,
+      "ambiguous_admitted": 0,
+      "n_ambiguous": 3,
+      "total_errors": 20
     }
   ],
   "n_answerable": 20,
   "n_unanswerable": 4,
   "n_ambiguous": 3,
   "answerable_scores": [
-    12.405,
-    13.303,
-    14.82,
-    14.845,
-    15.467,
-    15.86,
-    15.93,
-    16.269,
-    17.47,
-    18.493,
-    19.27,
-    19.365,
-    20.521,
-    20.961,
-    22.296,
-    29.023,
-    33.787,
-    34.603,
-    47.734,
-    48.748
+    12.144,
+    14.037,
+    14.536,
+    15.007,
+    15.125,
+    15.876,
+    15.916,
+    16.595,
+    16.728,
+    17.621,
+    17.778,
+    19.857,
+    20.516,
+    20.519,
+    22.022,
+    28.448,
+    36.377,
+    37.305,
+    46.505,
+    48.273
   ],
   "unanswerable_scores": [
-    12.478,
-    12.923,
-    14.264,
-    17.276
+    12.254,
+    12.616,
+    12.915,
+    18.602
   ],
   "ambiguous_scores": [
-    8.817,
-    11.774,
-    14.499
+    8.837,
+    11.292,
+    13.792
   ]
 }

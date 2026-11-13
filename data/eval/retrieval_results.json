@@ -1,7 +1,7 @@
 [
   {
     "k": 4,
-    "threshold": 15.477,
+    "threshold": 15.476805089498837,
     "rows": [
       {
         "qid": "A1",
@@ -17,7 +17,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 16.462,
+        "top_score": 16.462307443458272,
+        "top_score_display": 16.462,
         "gated_in": true,
         "chars": 1786
       },
@@ -35,7 +36,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 46.357,
+        "top_score": 46.357231513053,
+        "top_score_display": 46.357,
         "gated_in": true,
         "chars": 2369
       },
@@ -53,7 +55,8 @@
         ],
         "rank": null,
         "id_rank": 1,
-        "top_score": 18.44,
+        "top_score": 18.43967066139915,
+        "top_score_display": 18.44,
         "gated_in": true,
         "chars": 2372
       },
@@ -71,7 +74,8 @@
         ],
         "rank": 0,
         "id_rank": 1,
-        "top_score": 21.017,
+        "top_score": 21.017181616086482,
+        "top_score_display": 21.017,
         "gated_in": true,
         "chars": 2034
       },
@@ -89,7 +93,8 @@
         ],
         "rank": 1,
         "id_rank": 1,
-        "top_score": 27.994,
+        "top_score": 27.994455742564078,
+        "top_score_display": 27.994,
         "gated_in": true,
         "chars": 2100
       },
@@ -107,7 +112,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 45.851,
+        "top_score": 45.85141065055795,
+        "top_score_display": 45.851,
         "gated_in": true,
         "chars": 2383
       },
@@ -125,7 +131,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 11.937,
+        "top_score": 11.937204447101257,
+        "top_score_display": 11.937,
         "gated_in": false,
         "chars": 2217
       },
@@ -143,7 +150,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 15.412,
+        "top_score": 15.411729197568604,
+        "top_score_display": 15.412,
         "gated_in": false,
         "chars": 2371
       },
@@ -161,8 +169,9 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 15.477,
-        "gated_in": false,
+        "top_score": 15.476805089498837,
+        "top_score_display": 15.477,
+        "gated_in": true,
         "chars": 2364
       },
       {
@@ -180,7 +189,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 17.947,
+        "top_score": 17.947250254271054,
+        "top_score_display": 17.947,
         "gated_in": true,
         "chars": 2366
       },
@@ -198,7 +208,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 15.419,
+        "top_score": 15.4189827404855,
+        "top_score_display": 15.419,
         "gated_in": false,
         "chars": 2196
       },
@@ -217,7 +228,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 17.662,
+        "top_score": 17.661874953271013,
+        "top_score_display": 17.662,
         "gated_in": true,
         "chars": 2387
       },
@@ -236,7 +248,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 21.806,
+        "top_score": 21.80646632484331,
+        "top_score_display": 21.806,
         "gated_in": true,
         "chars": 2385
       },
@@ -255,7 +268,8 @@
         ],
         "rank": 3,
         "id_rank": 2,
-        "top_score": 32.428,
+        "top_score": 32.428297994393304,
+        "top_score_display": 32.428,
         "gated_in": true,
         "chars": 2377
       },
@@ -273,7 +287,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 17.051,
+        "top_score": 17.05091619542756,
+        "top_score_display": 17.051,
         "gated_in": true,
         "chars": 2247
       },
@@ -292,7 +307,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 15.366,
+        "top_score": 15.36560551397262,
+        "top_score_display": 15.366,
         "gated_in": false,
         "chars": 2303
       },
@@ -310,7 +326,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 22.043,
+        "top_score": 22.042840473760034,
+        "top_score_display": 22.043,
         "gated_in": true,
         "chars": 2370
       },
@@ -328,7 +345,8 @@
         ],
         "rank": 2,
         "id_rank": 1,
-        "top_score": 32.91,
+        "top_score": 32.91025401787431,
+        "top_score_display": 32.91,
         "gated_in": true,
         "chars": 2189
       },
@@ -346,7 +364,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 11.564,
+        "top_score": 11.563956324984417,
+        "top_score_display": 11.564,
         "gated_in": false,
         "chars": 2187
       },
@@ -364,7 +383,8 @@
         ],
         "rank": 0,
         "id_rank": null,
-        "top_score": 19.425,
+        "top_score": 19.4246084858747,
+        "top_score_display": 19.425,
         "gated_in": true,
         "chars": 2369
       },
@@ -380,7 +400,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 8.769,
+        "top_score": 8.769395896313599,
+        "top_score_display": 8.769,
         "gated_in": false,
         "chars": 2160
       },
@@ -396,7 +417,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 12.156,
+        "top_score": 12.156459297068393,
+        "top_score_display": 12.156,
         "gated_in": false,
         "chars": 2249
       },
@@ -412,7 +434,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 9.538,
+        "top_score": 9.537841265786298,
+        "top_score_display": 9.538,
         "gated_in": false,
         "chars": 2380
       },
@@ -428,7 +451,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 13.531,
+        "top_score": 13.530553497433706,
+        "top_score_display": 13.531,
         "gated_in": false,
         "chars": 2188
       },
@@ -444,7 +468,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 14.626,
+        "top_score": 14.626346145009212,
+        "top_score_display": 14.626,
         "gated_in": false,
         "chars": 2386
       },
@@ -460,7 +485,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 12.817,
+        "top_score": 12.816831090834887,
+        "top_score_display": 12.817,
         "gated_in": false,
         "chars": 1805
       },
@@ -476,7 +502,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 12.463,
+        "top_score": 12.462743417328632,
+        "top_score_display": 12.463,
         "gated_in": false,
         "chars": 2311
       }
@@ -484,10 +511,12 @@
     "recall_at_k": 0.4,
     "recall_at_k_by_id": 0.4,
     "mrr": 0.30416666666666664,
-    "false_abstain": 0.3,
+    "false_abstain": 0.25,
     "false_answer": 0.0,
     "n_answerable": 20,
-    "n_unanswerable": 7,
+    "n_unanswerable": 4,
+    "ambiguous_admitted": 0,
+    "n_ambiguous": 3,
     "char_budget": null,
     "chars_per_answer_mean": 2253.740740740741,
     "chunk_size": 600,
@@ -495,7 +524,7 @@
     "n_chunks": 744,
     "equal_budget": {
       "k": 4,
-      "threshold": 15.477,
+      "threshold": 15.476805089498837,
       "rows": [
         {
           "qid": "A1",
@@ -511,7 +540,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 16.462,
+          "top_score": 16.462307443458272,
+          "top_score_display": 16.462,
           "gated_in": true,
           "chars": 1786
         },
@@ -529,7 +559,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 46.357,
+          "top_score": 46.357231513053,
+          "top_score_display": 46.357,
           "gated_in": true,
           "chars": 2369
         },
@@ -547,7 +578,8 @@
           ],
           "rank": null,
           "id_rank": 1,
-          "top_score": 18.44,
+          "top_score": 18.43967066139915,
+          "top_score_display": 18.44,
           "gated_in": true,
           "chars": 2372
         },
@@ -565,7 +597,8 @@
           ],
           "rank": 0,
           "id_rank": 1,
-          "top_score": 21.017,
+          "top_score": 21.017181616086482,
+          "top_score_display": 21.017,
           "gated_in": true,
           "chars": 2034
         },
@@ -583,7 +616,8 @@
           ],
           "rank": 1,
           "id_rank": 1,
-          "top_score": 27.994,
+          "top_score": 27.994455742564078,
+          "top_score_display": 27.994,
           "gated_in": true,
           "chars": 2100
         },
@@ -601,7 +635,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 45.851,
+          "top_score": 45.85141065055795,
+          "top_score_display": 45.851,
           "gated_in": true,
           "chars": 2383
         },
@@ -619,7 +654,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 11.937,
+          "top_score": 11.937204447101257,
+          "top_score_display": 11.937,
           "gated_in": false,
           "chars": 2217
         },
@@ -637,7 +673,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 15.412,
+          "top_score": 15.411729197568604,
+          "top_score_display": 15.412,
           "gated_in": false,
           "chars": 2371
         },
@@ -655,8 +692,9 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 15.477,
-          "gated_in": false,
+          "top_score": 15.476805089498837,
+          "top_score_display": 15.477,
+          "gated_in": true,
           "chars": 2364
         },
         {
@@ -674,7 +712,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 17.947,
+          "top_score": 17.947250254271054,
+          "top_score_display": 17.947,
           "gated_in": true,
           "chars": 2366
         },
@@ -692,7 +731,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 15.419,
+          "top_score": 15.4189827404855,
+          "top_score_display": 15.419,
           "gated_in": false,
           "chars": 2196
         },
@@ -711,7 +751,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 17.662,
+          "top_score": 17.661874953271013,
+          "top_score_display": 17.662,
           "gated_in": true,
           "chars": 2387
         },
@@ -730,7 +771,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 21.806,
+          "top_score": 21.80646632484331,
+          "top_score_display": 21.806,
           "gated_in": true,
           "chars": 2385
         },
@@ -749,7 +791,8 @@
           ],
           "rank": 3,
           "id_rank": 2,
-          "top_score": 32.428,
+          "top_score": 32.428297994393304,
+          "top_score_display": 32.428,
           "gated_in": true,
           "chars": 2377
         },
@@ -767,7 +810,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 17.051,
+          "top_score": 17.05091619542756,
+          "top_score_display": 17.051,
           "gated_in": true,
           "chars": 2247
         },
@@ -786,7 +830,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 15.366,
+          "top_score": 15.36560551397262,
+          "top_score_display": 15.366,
           "gated_in": false,
           "chars": 2303
         },
@@ -804,7 +849,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 22.043,
+          "top_score": 22.042840473760034,
+          "top_score_display": 22.043,
           "gated_in": true,
           "chars": 2370
         },
@@ -822,7 +868,8 @@
           ],
           "rank": 2,
           "id_rank": 1,
-          "top_score": 32.91,
+          "top_score": 32.91025401787431,
+          "top_score_display": 32.91,
           "gated_in": true,
           "chars": 2189
         },
@@ -840,7 +887,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 11.564,
+          "top_score": 11.563956324984417,
+          "top_score_display": 11.564,
           "gated_in": false,
           "chars": 2187
         },
@@ -858,7 +906,8 @@
           ],
           "rank": 0,
           "id_rank": null,
-          "top_score": 19.425,
+          "top_score": 19.4246084858747,
+          "top_score_display": 19.425,
           "gated_in": true,
           "chars": 2369
         },
@@ -874,7 +923,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 8.769,
+          "top_score": 8.769395896313599,
+          "top_score_display": 8.769,
           "gated_in": false,
           "chars": 2160
         },
@@ -890,7 +940,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 12.156,
+          "top_score": 12.156459297068393,
+          "top_score_display": 12.156,
           "gated_in": false,
           "chars": 2249
         },
@@ -906,7 +957,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 9.538,
+          "top_score": 9.537841265786298,
+          "top_score_display": 9.538,
           "gated_in": false,
           "chars": 2380
         },
@@ -922,7 +974,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 13.531,
+          "top_score": 13.530553497433706,
+          "top_score_display": 13.531,
           "gated_in": false,
           "chars": 2188
         },
@@ -938,7 +991,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 14.626,
+          "top_score": 14.626346145009212,
+          "top_score_display": 14.626,
           "gated_in": false,
           "chars": 2386
         },
@@ -954,7 +1008,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 12.817,
+          "top_score": 12.816831090834887,
+          "top_score_display": 12.817,
           "gated_in": false,
           "chars": 1805
         },
@@ -970,7 +1025,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 12.463,
+          "top_score": 12.462743417328632,
+          "top_score_display": 12.463,
           "gated_in": false,
           "chars": 2311
         }
@@ -978,17 +1034,19 @@
       "recall_at_k": 0.4,
       "recall_at_k_by_id": 0.4,
       "mrr": 0.30416666666666664,
-      "false_abstain": 0.3,
+      "false_abstain": 0.25,
       "false_answer": 0.0,
       "n_answerable": 20,
-      "n_unanswerable": 7,
+      "n_unanswerable": 4,
+      "ambiguous_admitted": 0,
+      "n_ambiguous": 3,
       "char_budget": 3600,
       "chars_per_answer_mean": 2253.740740740741
     }
   },
   {
     "k": 4,
-    "threshold": 15.86,
+    "threshold": 15.859672430779744,
     "rows": [
       {
         "qid": "A1",
@@ -1004,7 +1062,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 15.467,
+        "top_score": 15.467176624823763,
+        "top_score_display": 15.467,
         "gated_in": false,
         "chars": 2540
       },
@@ -1022,7 +1081,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 47.734,
+        "top_score": 47.73432820326957,
+        "top_score_display": 47.734,
         "gated_in": true,
         "chars": 3286
       },
@@ -1040,7 +1100,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 20.961,
+        "top_score": 20.96108473704373,
+        "top_score_display": 20.961,
         "gated_in": true,
         "chars": 3163
       },
@@ -1058,7 +1119,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 19.27,
+        "top_score": 19.269595616841475,
+        "top_score_display": 19.27,
         "gated_in": true,
         "chars": 2816
       },
@@ -1076,7 +1138,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 29.023,
+        "top_score": 29.02251532813918,
+        "top_score_display": 29.023,
         "gated_in": true,
         "chars": 2974
       },
@@ -1094,7 +1157,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 48.748,
+        "top_score": 48.74838626958574,
+        "top_score_display": 48.748,
         "gated_in": true,
         "chars": 3286
       },
@@ -1112,7 +1176,8 @@
         ],
         "rank": 3,
         "id_rank": 3,
-        "top_score": 12.405,
+        "top_score": 12.405252217903644,
+        "top_score_display": 12.405,
         "gated_in": false,
         "chars": 3127
       },
@@ -1130,8 +1195,9 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 15.86,
-        "gated_in": false,
+        "top_score": 15.859672430779744,
+        "top_score_display": 15.86,
+        "gated_in": true,
         "chars": 3574
       },
       {
@@ -1148,7 +1214,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 13.303,
+        "top_score": 13.303204349607608,
+        "top_score_display": 13.303,
         "gated_in": false,
         "chars": 3586
       },
@@ -1167,7 +1234,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 18.493,
+        "top_score": 18.49295054268259,
+        "top_score_display": 18.493,
         "gated_in": true,
         "chars": 3180
       },
@@ -1185,7 +1253,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 14.82,
+        "top_score": 14.819921418864396,
+        "top_score_display": 14.82,
         "gated_in": false,
         "chars": 3085
       },
@@ -1204,7 +1273,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 15.93,
+        "top_score": 15.9298407936515,
+        "top_score_display": 15.93,
         "gated_in": true,
         "chars": 3576
       },
@@ -1223,7 +1293,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 20.521,
+        "top_score": 20.5206214511074,
+        "top_score_display": 20.521,
         "gated_in": true,
         "chars": 3566
       },
@@ -1242,7 +1313,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 34.603,
+        "top_score": 34.60261389662173,
+        "top_score_display": 34.603,
         "gated_in": true,
         "chars": 3584
       },
@@ -1260,7 +1332,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 17.47,
+        "top_score": 17.469705619239726,
+        "top_score_display": 17.47,
         "gated_in": true,
         "chars": 3299
       },
@@ -1279,7 +1352,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 16.269,
+        "top_score": 16.26879220447636,
+        "top_score_display": 16.269,
         "gated_in": true,
         "chars": 3220
       },
@@ -1297,7 +1371,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 22.296,
+        "top_score": 22.296102874186342,
+        "top_score_display": 22.296,
         "gated_in": true,
         "chars": 3171
       },
@@ -1315,7 +1390,8 @@
         ],
         "rank": 1,
         "id_rank": 2,
-        "top_score": 33.787,
+        "top_score": 33.78739796293114,
+        "top_score_display": 33.787,
         "gated_in": true,
         "chars": 3084
       },
@@ -1333,7 +1409,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 14.845,
+        "top_score": 14.84520373346827,
+        "top_score_display": 14.845,
         "gated_in": false,
         "chars": 3211
       },
@@ -1351,7 +1428,8 @@
         ],
         "rank": 1,
         "id_rank": 1,
-        "top_score": 19.365,
+        "top_score": 19.364952872846903,
+        "top_score_display": 19.365,
         "gated_in": true,
         "chars": 3585
       },
@@ -1367,7 +1445,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 8.817,
+        "top_score": 8.81726589982629,
+        "top_score_display": 8.817,
         "gated_in": false,
         "chars": 2912
       },
@@ -1383,7 +1462,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 11.774,
+        "top_score": 11.77354952417274,
+        "top_score_display": 11.774,
         "gated_in": false,
         "chars": 3123
       },
@@ -1399,7 +1479,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 14.499,
+        "top_score": 14.499302426970377,
+        "top_score_display": 14.499,
         "gated_in": false,
         "chars": 3136
       },
@@ -1415,7 +1496,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 17.276,
+        "top_score": 17.276385935929525,
+        "top_score_display": 17.276,
         "gated_in": true,
         "chars": 3582
       },
@@ -1431,7 +1513,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 14.264,
+        "top_score": 14.263799331514864,
+        "top_score_display": 14.264,
         "gated_in": false,
         "chars": 3278
       },
@@ -1447,7 +1530,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 12.478,
+        "top_score": 12.478374528863696,
+        "top_score_display": 12.478,
         "gated_in": false,
         "chars": 3219
       },
@@ -1463,7 +1547,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 12.923,
+        "top_score": 12.922509626411452,
+        "top_score_display": 12.923,
         "gated_in": false,
         "chars": 3578
       }
@@ -1471,10 +1556,12 @@
     "recall_at_k": 0.5,
     "recall_at_k_by_id": 0.5,
     "mrr": 0.4125,
-    "false_abstain": 0.3,
-    "false_answer": 0.14285714285714285,
+    "false_abstain": 0.25,
+    "false_answer": 0.25,
     "n_answerable": 20,
-    "n_unanswerable": 7,
+    "n_unanswerable": 4,
+    "ambiguous_admitted": 0,
+    "n_ambiguous": 3,
     "char_budget": null,
     "chars_per_answer_mean": 3249.6666666666665,
     "chunk_size": 900,
@@ -1482,7 +1569,7 @@
     "n_chunks": 500,
     "equal_budget": {
       "k": 4,
-      "threshold": 15.86,
+      "threshold": 15.859672430779744,
       "rows": [
         {
           "qid": "A1",
@@ -1498,7 +1585,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 15.467,
+          "top_score": 15.467176624823763,
+          "top_score_display": 15.467,
           "gated_in": false,
           "chars": 2540
         },
@@ -1516,7 +1604,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 47.734,
+          "top_score": 47.73432820326957,
+          "top_score_display": 47.734,
           "gated_in": true,
           "chars": 3286
         },
@@ -1534,7 +1623,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 20.961,
+          "top_score": 20.96108473704373,
+          "top_score_display": 20.961,
           "gated_in": true,
           "chars": 3163
         },
@@ -1552,7 +1642,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 19.27,
+          "top_score": 19.269595616841475,
+          "top_score_display": 19.27,
           "gated_in": true,
           "chars": 2816
         },
@@ -1570,7 +1661,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 29.023,
+          "top_score": 29.02251532813918,
+          "top_score_display": 29.023,
           "gated_in": true,
           "chars": 2974
         },
@@ -1588,7 +1680,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 48.748,
+          "top_score": 48.74838626958574,
+          "top_score_display": 48.748,
           "gated_in": true,
           "chars": 3286
         },
@@ -1606,7 +1699,8 @@
           ],
           "rank": 3,
           "id_rank": 3,
-          "top_score": 12.405,
+          "top_score": 12.405252217903644,
+          "top_score_display": 12.405,
           "gated_in": false,
           "chars": 3127
         },
@@ -1624,8 +1718,9 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 15.86,
-          "gated_in": false,
+          "top_score": 15.859672430779744,
+          "top_score_display": 15.86,
+          "gated_in": true,
           "chars": 3574
         },
         {
@@ -1642,7 +1737,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 13.303,
+          "top_score": 13.303204349607608,
+          "top_score_display": 13.303,
           "gated_in": false,
           "chars": 3586
         },
@@ -1661,7 +1757,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 18.493,
+          "top_score": 18.49295054268259,
+          "top_score_display": 18.493,
           "gated_in": true,
           "chars": 3180
         },
@@ -1679,7 +1776,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 14.82,
+          "top_score": 14.819921418864396,
+          "top_score_display": 14.82,
           "gated_in": false,
           "chars": 3085
         },
@@ -1698,7 +1796,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 15.93,
+          "top_score": 15.9298407936515,
+          "top_score_display": 15.93,
           "gated_in": true,
           "chars": 3576
         },
@@ -1717,7 +1816,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 20.521,
+          "top_score": 20.5206214511074,
+          "top_score_display": 20.521,
           "gated_in": true,
           "chars": 3566
         },
@@ -1736,7 +1836,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 34.603,
+          "top_score": 34.60261389662173,
+          "top_score_display": 34.603,
           "gated_in": true,
           "chars": 3584
         },
@@ -1754,7 +1855,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 17.47,
+          "top_score": 17.469705619239726,
+          "top_score_display": 17.47,
           "gated_in": true,
           "chars": 3299
         },
@@ -1773,7 +1875,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 16.269,
+          "top_score": 16.26879220447636,
+          "top_score_display": 16.269,
           "gated_in": true,
           "chars": 3220
         },
@@ -1791,7 +1894,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 22.296,
+          "top_score": 22.296102874186342,
+          "top_score_display": 22.296,
           "gated_in": true,
           "chars": 3171
         },
@@ -1809,7 +1913,8 @@
           ],
           "rank": 1,
           "id_rank": 2,
-          "top_score": 33.787,
+          "top_score": 33.78739796293114,
+          "top_score_display": 33.787,
           "gated_in": true,
           "chars": 3084
         },
@@ -1827,7 +1932,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 14.845,
+          "top_score": 14.84520373346827,
+          "top_score_display": 14.845,
           "gated_in": false,
           "chars": 3211
         },
@@ -1845,7 +1951,8 @@
           ],
           "rank": 1,
           "id_rank": 1,
-          "top_score": 19.365,
+          "top_score": 19.364952872846903,
+          "top_score_display": 19.365,
           "gated_in": true,
           "chars": 3585
         },
@@ -1861,7 +1968,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 8.817,
+          "top_score": 8.81726589982629,
+          "top_score_display": 8.817,
           "gated_in": false,
           "chars": 2912
         },
@@ -1877,7 +1985,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 11.774,
+          "top_score": 11.77354952417274,
+          "top_score_display": 11.774,
           "gated_in": false,
           "chars": 3123
         },
@@ -1893,7 +2002,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 14.499,
+          "top_score": 14.499302426970377,
+          "top_score_display": 14.499,
           "gated_in": false,
           "chars": 3136
         },
@@ -1909,7 +2019,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 17.276,
+          "top_score": 17.276385935929525,
+          "top_score_display": 17.276,
           "gated_in": true,
           "chars": 3582
         },
@@ -1925,7 +2036,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 14.264,
+          "top_score": 14.263799331514864,
+          "top_score_display": 14.264,
           "gated_in": false,
           "chars": 3278
         },
@@ -1941,7 +2053,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 12.478,
+          "top_score": 12.478374528863696,
+          "top_score_display": 12.478,
           "gated_in": false,
           "chars": 3219
         },
@@ -1957,7 +2070,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 12.923,
+          "top_score": 12.922509626411452,
+          "top_score_display": 12.923,
           "gated_in": false,
           "chars": 3578
         }
@@ -1965,17 +2079,19 @@
       "recall_at_k": 0.5,
       "recall_at_k_by_id": 0.5,
       "mrr": 0.4125,
-      "false_abstain": 0.3,
-      "false_answer": 0.14285714285714285,
+      "false_abstain": 0.25,
+      "false_answer": 0.25,
       "n_answerable": 20,
-      "n_unanswerable": 7,
+      "n_unanswerable": 4,
+      "ambiguous_admitted": 0,
+      "n_ambiguous": 3,
       "char_budget": 3600,
       "chars_per_answer_mean": 3249.6666666666665
     }
   },
   {
     "k": 4,
-    "threshold": 15.876,
+    "threshold": 15.87646516269393,
     "rows": [
       {
         "qid": "A1",
@@ -1991,7 +2107,8 @@
         ],
         "rank": 2,
         "id_rank": 2,
-        "top_score": 16.595,
+        "top_score": 16.594726601619083,
+        "top_score_display": 16.595,
         "gated_in": true,
         "chars": 2949
       },
@@ -2009,7 +2126,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 48.273,
+        "top_score": 48.27346661588457,
+        "top_score_display": 48.273,
         "gated_in": true,
         "chars": 4180
       },
@@ -2027,7 +2145,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 19.857,
+        "top_score": 19.856684904589905,
+        "top_score_display": 19.857,
         "gated_in": true,
         "chars": 4786
       },
@@ -2045,7 +2164,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 20.516,
+        "top_score": 20.515910094254288,
+        "top_score_display": 20.516,
         "gated_in": true,
         "chars": 3149
       },
@@ -2063,7 +2183,8 @@
         ],
         "rank": 0,
         "id_rank": 2,
-        "top_score": 28.448,
+        "top_score": 28.447715862392556,
+        "top_score_display": 28.448,
         "gated_in": true,
         "chars": 3319
       },
@@ -2081,7 +2202,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 46.505,
+        "top_score": 46.50478686989537,
+        "top_score_display": 46.505,
         "gated_in": true,
         "chars": 4180
       },
@@ -2099,7 +2221,8 @@
         ],
         "rank": 3,
         "id_rank": 3,
-        "top_score": 14.037,
+        "top_score": 14.037131255362391,
+        "top_score_display": 14.037,
         "gated_in": false,
         "chars": 4001
       },
@@ -2117,7 +2240,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 15.916,
+        "top_score": 15.916375685499103,
+        "top_score_display": 15.916,
         "gated_in": true,
         "chars": 4788
       },
@@ -2135,7 +2259,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 12.144,
+        "top_score": 12.143844080958047,
+        "top_score_display": 12.144,
         "gated_in": false,
         "chars": 4782
       },
@@ -2154,7 +2279,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 17.778,
+        "top_score": 17.777703147443965,
+        "top_score_display": 17.778,
         "gated_in": true,
         "chars": 4756
       },
@@ -2172,7 +2298,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 15.125,
+        "top_score": 15.124915987060534,
+        "top_score_display": 15.125,
         "gated_in": false,
         "chars": 4388
       },
@@ -2191,7 +2318,8 @@
         ],
         "rank": 3,
         "id_rank": 3,
-        "top_score": 14.536,
+        "top_score": 14.536259677849436,
+        "top_score_display": 14.536,
         "gated_in": false,
         "chars": 4778
       },
@@ -2210,7 +2338,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 20.519,
+        "top_score": 20.51894727360311,
+        "top_score_display": 20.519,
         "gated_in": true,
         "chars": 4543
       },
@@ -2229,7 +2358,8 @@
         ],
         "rank": 1,
         "id_rank": 1,
-        "top_score": 36.377,
+        "top_score": 36.37660913312089,
+        "top_score_display": 36.377,
         "gated_in": true,
         "chars": 4759
       },
@@ -2247,7 +2377,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 16.728,
+        "top_score": 16.728109695849067,
+        "top_score_display": 16.728,
         "gated_in": true,
         "chars": 3958
       },
@@ -2266,7 +2397,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 15.876,
+        "top_score": 15.87646516269393,
+        "top_score_display": 15.876,
         "gated_in": true,
         "chars": 4111
       },
@@ -2284,7 +2416,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 22.022,
+        "top_score": 22.021831990305415,
+        "top_score_display": 22.022,
         "gated_in": true,
         "chars": 4764
       },
@@ -2302,7 +2435,8 @@
         ],
         "rank": 0,
         "id_rank": 0,
-        "top_score": 37.305,
+        "top_score": 37.30463771474494,
+        "top_score_display": 37.305,
         "gated_in": true,
         "chars": 3463
       },
@@ -2320,7 +2454,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 15.007,
+        "top_score": 15.006624172832275,
+        "top_score_display": 15.007,
         "gated_in": false,
         "chars": 4538
       },
@@ -2338,7 +2473,8 @@
         ],
         "rank": 0,
         "id_rank": null,
-        "top_score": 17.621,
+        "top_score": 17.620533382374408,
+        "top_score_display": 17.621,
         "gated_in": true,
         "chars": 4777
       },
@@ -2354,7 +2490,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 8.837,
+        "top_score": 8.836859997065883,
+        "top_score_display": 8.837,
         "gated_in": false,
         "chars": 3229
       },
@@ -2370,7 +2507,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 11.292,
+        "top_score": 11.291712978800481,
+        "top_score_display": 11.292,
         "gated_in": false,
         "chars": 4546
       },
@@ -2386,7 +2524,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 13.792,
+        "top_score": 13.791510608477934,
+        "top_score_display": 13.792,
         "gated_in": false,
         "chars": 4541
       },
@@ -2402,7 +2541,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 18.602,
+        "top_score": 18.60192965240555,
+        "top_score_display": 18.602,
         "gated_in": true,
         "chars": 4542
       },
@@ -2418,7 +2558,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 12.915,
+        "top_score": 12.914564051215851,
+        "top_score_display": 12.915,
         "gated_in": false,
         "chars": 4781
       },
@@ -2434,7 +2575,8 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 12.254,
+        "top_score": 12.254331969768277,
+        "top_score_display": 12.254,
         "gated_in": false,
         "chars": 3627
       },
@@ -2450,18 +2592,21 @@
         ],
         "rank": null,
         "id_rank": null,
-        "top_score": 12.616,
+        "top_score": 12.615784032300263,
+        "top_score_display": 12.616,
         "gated_in": false,
         "chars": 4775
       }
     ],
     "recall_at_k": 0.55,
     "recall_at_k_by_id": 0.5,
-    "mrr": 0.41666666666666663,
+    "mrr": 0.4166666666666667,
     "false_abstain": 0.25,
-    "false_answer": 0.14285714285714285,
+    "false_answer": 0.25,
     "n_answerable": 20,
-    "n_unanswerable": 7,
+    "n_unanswerable": 4,
+    "ambiguous_admitted": 0,
+    "n_ambiguous": 3,
     "char_budget": null,
     "chars_per_answer_mean": 4259.62962962963,
     "chunk_size": 1200,
@@ -2469,7 +2614,7 @@
     "n_chunks": 379,
     "equal_budget": {
       "k": 4,
-      "threshold": 15.876,
+      "threshold": 15.87646516269393,
       "rows": [
         {
           "qid": "A1",
@@ -2485,7 +2630,8 @@
           ],
           "rank": 2,
           "id_rank": 2,
-          "top_score": 16.595,
+          "top_score": 16.594726601619083,
+          "top_score_display": 16.595,
           "gated_in": true,
           "chars": 2949
         },
@@ -2502,7 +2648,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 48.273,
+          "top_score": 48.27346661588457,
+          "top_score_display": 48.273,
           "gated_in": true,
           "chars": 2988
         },
@@ -2519,7 +2666,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 19.857,
+          "top_score": 19.856684904589905,
+          "top_score_display": 19.857,
           "gated_in": true,
           "chars": 3588
         },
@@ -2537,7 +2685,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 20.516,
+          "top_score": 20.515910094254288,
+          "top_score_display": 20.516,
           "gated_in": true,
           "chars": 3149
         },
@@ -2555,7 +2704,8 @@
           ],
           "rank": 0,
           "id_rank": 2,
-          "top_score": 28.448,
+          "top_score": 28.447715862392556,
+          "top_score_display": 28.448,
           "gated_in": true,
           "chars": 3319
         },
@@ -2572,7 +2722,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 46.505,
+          "top_score": 46.50478686989537,
+          "top_score_display": 46.505,
           "gated_in": true,
           "chars": 3589
         },
@@ -2589,7 +2740,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 14.037,
+          "top_score": 14.037131255362391,
+          "top_score_display": 14.037,
           "gated_in": false,
           "chars": 3554
         },
@@ -2606,7 +2758,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 15.916,
+          "top_score": 15.916375685499103,
+          "top_score_display": 15.916,
           "gated_in": true,
           "chars": 3589
         },
@@ -2623,7 +2776,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 12.144,
+          "top_score": 12.143844080958047,
+          "top_score_display": 12.144,
           "gated_in": false,
           "chars": 3586
         },
@@ -2641,7 +2795,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 17.778,
+          "top_score": 17.777703147443965,
+          "top_score_display": 17.778,
           "gated_in": true,
           "chars": 3562
         },
@@ -2658,7 +2813,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 15.125,
+          "top_score": 15.124915987060534,
+          "top_score_display": 15.125,
           "gated_in": false,
           "chars": 3193
         },
@@ -2676,7 +2832,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 14.536,
+          "top_score": 14.536259677849436,
+          "top_score_display": 14.536,
           "gated_in": false,
           "chars": 3580
         },
@@ -2694,7 +2851,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 20.519,
+          "top_score": 20.51894727360311,
+          "top_score_display": 20.519,
           "gated_in": true,
           "chars": 3345
         },
@@ -2712,7 +2870,8 @@
           ],
           "rank": 1,
           "id_rank": 1,
-          "top_score": 36.377,
+          "top_score": 36.37660913312089,
+          "top_score_display": 36.377,
           "gated_in": true,
           "chars": 3590
         },
@@ -2729,7 +2888,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 16.728,
+          "top_score": 16.728109695849067,
+          "top_score_display": 16.728,
           "gated_in": true,
           "chars": 3340
         },
@@ -2747,7 +2907,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 15.876,
+          "top_score": 15.87646516269393,
+          "top_score_display": 15.876,
           "gated_in": true,
           "chars": 3592
         },
@@ -2764,7 +2925,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 22.022,
+          "top_score": 22.021831990305415,
+          "top_score_display": 22.022,
           "gated_in": true,
           "chars": 3565
         },
@@ -2782,7 +2944,8 @@
           ],
           "rank": 0,
           "id_rank": 0,
-          "top_score": 37.305,
+          "top_score": 37.30463771474494,
+          "top_score_display": 37.305,
           "gated_in": true,
           "chars": 3463
         },
@@ -2799,7 +2962,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 15.007,
+          "top_score": 15.006624172832275,
+          "top_score_display": 15.007,
           "gated_in": false,
           "chars": 3340
         },
@@ -2816,7 +2980,8 @@
           ],
           "rank": 0,
           "id_rank": null,
-          "top_score": 17.621,
+          "top_score": 17.620533382374408,
+          "top_score_display": 17.621,
           "gated_in": true,
           "chars": 3580
         },
@@ -2832,7 +2997,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 8.837,
+          "top_score": 8.836859997065883,
+          "top_score_display": 8.837,
           "gated_in": false,
           "chars": 3229
         },
@@ -2847,7 +3013,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 11.292,
+          "top_score": 11.291712978800481,
+          "top_score_display": 11.292,
           "gated_in": false,
           "chars": 3584
         },
@@ -2862,7 +3029,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 13.792,
+          "top_score": 13.791510608477934,
+          "top_score_display": 13.792,
           "gated_in": false,
           "chars": 3591
         },
@@ -2877,7 +3045,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 18.602,
+          "top_score": 18.60192965240555,
+          "top_score_display": 18.602,
           "gated_in": true,
           "chars": 3346
         },
@@ -2892,7 +3061,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 12.915,
+          "top_score": 12.914564051215851,
+          "top_score_display": 12.915,
           "gated_in": false,
           "chars": 3583
         },
@@ -2907,7 +3077,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 12.254,
+          "top_score": 12.254331969768277,
+          "top_score_display": 12.254,
           "gated_in": false,
           "chars": 2433
         },
@@ -2922,7 +3093,8 @@
           ],
           "rank": null,
           "id_rank": null,
-          "top_score": 12.616,
+          "top_score": 12.615784032300263,
+          "top_score_display": 12.616,
           "gated_in": false,
           "chars": 3584
         }
@@ -2931,9 +3103,11 @@
       "recall_at_k_by_id": 0.4,
       "mrr": 0.39166666666666666,
       "false_abstain": 0.25,
-      "false_answer": 0.14285714285714285,
+      "false_answer": 0.25,
       "n_answerable": 20,
-      "n_unanswerable": 7,
+      "n_unanswerable": 4,
+      "ambiguous_admitted": 0,
+      "n_ambiguous": 3,
       "char_budget": 3600,
       "chars_per_answer_mean": 3400.4074074074074
     }
