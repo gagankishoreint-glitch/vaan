@@ -137,9 +137,18 @@ Both arms: `loadgen --shape overload --rps 40 --duration 12 --max-tokens 80`,
 
 **What this shows: the assumption is not cosmetic.** Refund serves ~62 % more requests
 and pushes the first rejection back by 47 arrivals, because under no-refund every
-call permanently loses the cap it did not use. **What it does not show: which branch
-Groq implements.** That is still Q-06, still OPEN, still the supervisor's A/B curl.
-The 429s here are the stand-in's own bucket, not the provider's.
+call permanently loses the cap it did not use.
+
+**What this is NOT: evidence about Groq.** These 149-vs-92 numbers are a property of
+**the stand-in's own token estimator and constants**, exactly like the
+naive-vs-managed comparison: `len(json)/4` for prompts, `max_tokens` charged up
+front, `per_minute_limit 8000`, a continuous 133.3 tokens/s refill. Change any of
+those and the split moves. Nothing here was measured against the provider, and the
+429s are the stand-in's own bucket, not Groq's. The result belongs in the report as a
+**sensitivity check on one assumption**, never as a predicted provider outcome.
+
+**What it does not show: which branch Groq implements.** That is still Q-06, still
+OPEN, still the supervisor's A/B curl.
 
 The old `Bucket` (fixed window) got `remaining` right — 7844 exactly — and `reset`
 wrong by a factor of 50. A model can be half right, and the half it gets wrong was
