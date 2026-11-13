@@ -37,7 +37,7 @@ def check_citations(text: str, citations: list[Citation],
     across a line break cannot make a correct quote fail.
     """
     if not citations:
-        return CheckResult(False, "no citations")
+        return CheckResult(False, "verify_failed")
     for c in citations:
         chunk = chunks_by_id.get(c.chunk_id)
         if chunk is None:

@@ -241,7 +241,7 @@ class Pipeline:
             return Outcome_(send_reply(PassagesOnly(
                 "Not enough evidence to answer; here are the closest passages.",
                 tuple(h.chunk for h in hits), "verify_failed")), "passages_only",
-                "gate_low_score")
+                "verify_failed")
 
         try:
             if self.patience_s:
