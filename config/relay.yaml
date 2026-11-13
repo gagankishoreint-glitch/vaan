@@ -131,17 +131,37 @@ retrieval:
 
 standin:
   seed: 7
-  # Calibration targets for P4, all sourced from the P1 probe.
-  ttft_ms: null                       # set by P1 probe: TTFT distribution to replay
-  tokens_per_s: null                  # set by P1 probe: observed generation rate
-  error_rate: null                    # set by P1 probe: observed 5xx rate (0 if none seen)
-  p429_rate: null                     # set by P1 probe: observed 429 rate under our traffic
-  per_minute_limit: 8000              # OBSERVED (transcribed, n=4); raw JSONL pending
-  per_day_limit: null                 # set by P1 probe: observed x-ratelimit-limit-requests
+  # Calibration targets for P4.
+  #
+  # A null here means NOT YET MEASURED, and the stand-in prints a provisional
+  # fallback at startup. Never cite a probe mode as the source of a value before
+  # that mode has run -- see the table in docs/STANDIN.md.
+  # "set by X" names what WILL fill the key -- it is not a claim that X ran.
+  # NOT YET MEASURED is the status: never cite a probe mode as a source before it ran.
+  ttft_ms: null                       # set by P1 `single` mode -- NOT YET MEASURED: placeholder until that data exists
+  tokens_per_s: null                  # set by P1 `stream` mode -- NOT YET MEASURED: placeholder until that data exists
+  error_rate: null                    # set by P1 `burst`/`stream` -- NOT YET MEASURED: placeholder until that data exists
+  p429_rate: null                     # set by P1 `burst` mode -- NOT YET MEASURED: placeholder until that data exists
+  # Observed, n=4, from the probe's OWN records:
+  #   runs/probe_20261111T062707Z/single.jsonl, runs/probe_20261111T064821Z
+  # (transcribed raw JSONL pending: the supervisor commits calibration/probe/).
+  per_minute_limit: 8000
+  per_day_limit: null                 # set by the limits page (Q-04) -- NOT YET MEASURED: placeholder until that data exists
   # Whether the provider gives back unused completion cap when the call finishes.
-  # OPEN (Q-06). false = what the four transcribed observations show: the deficit
-  # carried the FULL cap even when only 41 of 80 tokens were generated. Flip it to
-  # run the A/B that settles the question. UNMEASURED as a switch.
+  #
+  # This is an ASSUMPTION, not an observation. Q-06 is OPEN until the supervisor's
+  # A/B curl result lands; `false` is the branch we default to, nothing more.
+  #
+  # The evidence is weaker than it once looked here:
+  #   * the deficit at ADMISSION carried the full cap (156 = 76 prompt + 80 cap with
+  #     41 generated). That is the deficit-time reading, and it says nothing about
+  #     what happens at completion -- an earlier version of this comment drew the
+  #     refund conclusion from it, which does not follow.
+  #   * the 1->2 interval fits refund slightly better than no-refund: assuming call 2
+  #     reserved the same 156, refund misses by ~10 tokens and no-refund by ~29.
+  #     That is n=2 intervals, and refund is still ~10 out -- closer, not correct.
+  #   * n=2, one model, one prompt shape: INCONCLUSIVE.
+  # Flip it to run the A/B. Every run records this value in `run.start`.
   refund_unused_cap: false
 
 observability:

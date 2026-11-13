@@ -284,6 +284,18 @@ class EventLog:
             counts = dict(self._attempt_backend_counts)
         self.emit("run.end", attempt_backend_counts=counts, **fields)
 
+    def start_run(self, **fields: Any) -> None:
+        """Record what this run ASSUMED, before any request happens.
+
+        `run.end` records how a run went; without a `run.start` there is nowhere to
+        record the assumptions it was run under. `standin.refund_unused_cap` is the
+        first such assumption: it changes the stand-in's bucket arithmetic, so two
+        runs with the same seed and the same questions can legitimately disagree.
+        Without this field a result cannot be tied to the assumption that produced
+        it, and the A/B that settles Q-06 would be two unattributable tables.
+        """
+        self.emit("run.start", **fields)
+
     def request(self, req_id: str) -> RequestScope:
         """Get-or-create the scope for a request."""
         with self._lock:

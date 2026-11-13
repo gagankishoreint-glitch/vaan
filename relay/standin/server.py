@@ -347,6 +347,12 @@ def build_state() -> StandIn:
         slow_success=os.environ.get("STANDIN_SLOW", "") == "1",
         hang_s=float(os.environ.get("STANDIN_HANG_S", "0") or 0),
         load_slowdown=float(os.environ.get("STANDIN_LOAD", "0") or 0),
+        # Q-06 is OPEN: this is the ASSUMED branch, and it is read from config so
+        # the A/B can actually be run. Before this, `refund_unused_cap` existed as a
+        # field, a default and a branch in the code, and NO caller ever set it --
+        # so the switch could not be flipped and both arms of the A/B would have
+        # been the same arm, silently.
+        refund_unused_cap=bool(CFG.get("standin.refund_unused_cap", False)),
     )
 
 
@@ -374,8 +380,28 @@ async def chat(request: Request):
 
 @app.get("/__stats")
 async def stats():
-    return {"calls": STATE.calls, "tpm_used": STATE.tpm_bucket.used,
-            "day_used": STATE.day_bucket.used, "rpd_used": STATE.req_bucket.used}
+    # The ASSUMPTIONS are part of the stats, not just the counters. Q-06 is OPEN, so
+    # two runs that differ only in `refund_unused_cap` can legitimately disagree; a
+    # result that cannot name the branch it ran under cannot be compared with the
+    # other branch, and the A/B would be two unattributable tables.
+    # `remaining(now)`, not a `.used` attribute: `RefillBucket` has never exposed
+    # `.used` since it replaced the fixed-window `Bucket` (BUG-033), so this route
+    # raised AttributeError on every call. Nothing read it in a test, so it stayed
+    # broken -- and any run that wanted to record its assumptions got a 500.
+    #
+    # The three buckets are NOT the same class: TPM is a `RefillBucket` (continuous
+    # refill, observed), while the day and request buckets are fixed-window
+    # `Bucket`s. Assuming one API for all three is how this route broke twice.
+    now = time.monotonic()
+    return {"calls": STATE.calls,
+            "tpm_remaining": STATE.tpm_bucket.remaining(now),
+            "day_used": STATE.day_bucket.used,
+            "rpd_used": STATE.req_bucket.used,
+            "assumptions": {
+                "refund_unused_cap": bool(getattr(STATE, "refund_unused_cap", False)),
+                "per_minute_limit": CFG.get("standin.per_minute_limit", None),
+                "seed": _knob_seed(),
+            }}
 
 
 @app.post("/__reset")

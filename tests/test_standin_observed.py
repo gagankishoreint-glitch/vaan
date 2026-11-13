@@ -1,8 +1,10 @@
 """5e: the stand-in must reproduce the FOUR transcribed Groq observations.
 
-Source: the supervisor's real runs on `openai/gpt-oss-20b`, free account, relayed as
-a transcription. Raw JSONL pending (calibration/probe/ lands when he is back at his
-PC), so this is n=4 and every claim here is labelled accordingly in docs/STANDIN.md.
+Source: the probe's OWN records -- runs/probe_20261111T062707Z/single.jsonl and
+runs/probe_20261111T064821Z -- not output relayed through curl. Those files are not
+in this repository yet (the supervisor commits calibration/probe/); until they are,
+the values below are RETYPED here, which is the thing to fix first when the files
+land. Every claim is labelled in docs/STANDIN.md.
 
       limit-tokens 8000, limit-requests 1000
       call 1 (full bucket, cap 80): prompt 76, completion 41,
@@ -12,15 +14,20 @@ PC), so this is n=4 and every claim here is labelled accordingly in docs/STANDIN
       call 3 (+0.98 s): remaining 7872, reset 0.960 s
 
 What these numbers PROVE:
-  * deficit == prompt + cap, not prompt + completion. Call 1 reserved 156 = 76 + 80
-    while only 41 tokens were generated. TPM is reserved up front (Q-06).
+  * deficit == prompt + cap at ADMISSION, not prompt + completion. Call 1 reserved
+    156 = 76 + 80 while only 41 tokens were generated. That is n=2 reservations
+    (calls 1 and 4), one model, one prompt shape.
   * reset == deficit / (8000/60) in all three. The bucket refills CONTINUOUSLY at
     133.3 tokens/s; it is not a fixed 60 s window (the old stand-in model).
   * reset-requests 1m26.4s == 86400/1000 s, consistent with *-requests being per day.
 
-What they do NOT prove: the refill FUNCTION over longer gaps (four points, all within
-2 s), whether unused cap is refunded (OPEN -- hence the config switch), or anything
-about a 429 body.
+What they do NOT prove -- and this docstring used to overclaim:
+  * whether unused cap is REFUNDED at completion (Q-06). The admission-time deficit
+    carrying the full cap says nothing about completion. The 1->2 interval fits
+    refund slightly better (miss ~10 tokens vs ~29), n=2 intervals, INCONCLUSIVE.
+    Hence `standin.refund_unused_cap`, whose default is an ASSUMPTION, not a finding.
+  * the refill FUNCTION over longer gaps (four points, all within 2 s).
+  * anything about a 429 body.
 
 Run: python -m pytest -q tests/test_standin_observed.py  -> 5 passed
 """
@@ -61,7 +68,11 @@ def test_reset_requests_is_a_day():
 
 
 def test_first_call_reserves_prompt_plus_cap_not_usage():
-    """Q-06, settled for n=1: the deficit is 76+80, not 76+41."""
+    """Reservation only: the deficit is 76+80, not 76+41.
+
+    This is n=2 (calls 1 and 4), one model, one prompt shape, and it says nothing
+    about whether the unused cap is refunded at completion (Q-06 stays OPEN).
+    """
     _, reserved, remaining, _ = OBS[0]
     assert reserved == 76 + 80, reserved
     assert remaining == 8000 - (76 + 80)
@@ -135,12 +146,14 @@ def test_reservation_includes_prompt_not_only_cap():
     assert abs(reset - (prompt + 80) / RATE) < 1e-9
 
 
-def test_unused_cap_is_not_refunded_by_default():
-    """Q-06 stays OPEN, but the DEFAULT must match the observation.
+def test_unused_cap_default_is_an_assumption_not_an_observation():
+    """Q-06 is OPEN. The default is a CHOICE, and this pins only the choice.
 
-    Call 1 reserved the full cap and generated 41 of 80; the deficit still carried
-    the whole 80. If refund were on by default the stand-in would contradict the
-    only real data we have.
+    `false` is the branch we start from, not a finding: the admission-time deficit
+    carrying the full cap is about reservation and says nothing about refund at
+    completion. The 1->2 interval favours refund slightly (~10 vs ~29 tokens) on
+    n=2 intervals -- inconclusive. This test would pass either way if the default
+    were flipped; that is the point. It guards the label, not the physics.
     """
     import inspect
 
@@ -148,5 +161,49 @@ def test_unused_cap_is_not_refunded_by_default():
 
     sig = inspect.signature(StandIn)
     assert sig.parameters["refund_unused_cap"].default is False, (
-        "refund_unused_cap must default to False: the observations show no refund, "
-        "and 'refund' is the unverified branch")
+        "refund_unused_cap must default to False: that is the ASSUMED branch. The "
+        "observations do not settle it (Q-06 OPEN); flip only to run the A/B")
+
+
+def test_when_the_probe_records_land_the_values_must_be_read_from_them():
+    """The retyped values above are a PLACEHOLDER with an expiry.
+
+    Source of record: runs/probe_20261111T062707Z/single.jsonl and
+    runs/probe_20261111T064821Z, which the supervisor commits under calibration/probe/.
+    The moment any probe jsonl is present in the tree, this test FAILS on purpose:
+    a transcription is a second place to be wrong, and the observations must then
+    come from the files. Until then it is the record that they have not landed.
+    """
+    from pathlib import Path
+
+    probe_dirs = sorted(Path("runs").glob("probe_*/single.jsonl")) + \
+        sorted(Path("calibration/probe").glob("**/*.jsonl"))
+    if probe_dirs:
+        raise AssertionError(
+            "probe records are now in the tree "
+            f"({[str(p) for p in probe_dirs][:3]}); OBS in this file must be READ "
+            "from them, not retyped. Delete the literals and parse the jsonl.")
+    # Not present: the retyped values are the only copy, which is why the label
+    # `transcribed, n=4, raw JSONL pending` appears in docs/STANDIN.md.
+    assert True
+
+
+def test_the_refund_switch_is_actually_read_from_config():
+    """A switch no caller sets is not a switch.
+
+    `refund_unused_cap` was a dataclass field with a default and a branch in the
+    code, and `build_state()` never passed it -- so flipping the config changed
+    nothing and both arms of the Q-06 A/B would have been the same arm. This pins
+    the wiring, not the value.
+    """
+    import os
+
+    from relay.standin import server
+
+    # Same config load the server does at import, read through the same helper.
+    assert server.CFG.get("standin.refund_unused_cap", False) is False, (
+        "the committed default is the assumed branch; if this changes, the label in "
+        "docs/STANDIN.md and config/relay.yaml must change with it")
+    s = server.build_state()
+    assert s.refund_unused_cap is False
+    assert isinstance(s.refund_unused_cap, bool)

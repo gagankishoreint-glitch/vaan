@@ -260,3 +260,32 @@ def test_an_unknown_diagnosis_cannot_leak_into_the_contract():
     from relay.pipeline.queue import contract_reason
     with pytest.raises(ValueError, match="no contract reason"):
         contract_reason("invented_diagnosis")
+
+
+# ---------------------------------------------------------------- run metadata
+def test_run_metadata_records_the_refund_assumption():
+    """Q-06 is OPEN, so every run must say which branch it ran under.
+
+    Without this, two overload runs that differ only in `refund_unused_cap` are
+    indistinguishable in the artifacts, and the A/B that settles Q-06 is two
+    tables nobody can attribute.
+    """
+    import json
+    import tempfile
+
+    from relay.events import EventLog
+
+    td = tempfile.mkdtemp()
+    log = EventLog(td, run_id="meta", backend="standin")
+    log.start_run(standin_refund_unused_cap=False, questions="q.jsonl")
+    log.end_run(n_requests=0)
+    log.close()
+    with open(f"{td}/events.jsonl", encoding="utf-8") as f:
+        evs = [json.loads(l) for l in f if l.strip()]
+    start = [e for e in evs if e["type"] == "run.start"]
+    assert len(start) == 1, "exactly one run.start"
+    assert start[0]["standin_refund_unused_cap"] is False
+    # bool, not "false": a string would compare unequal to the config value and
+    # silently read as "unknown" in any downstream check.
+    assert isinstance(start[0]["standin_refund_unused_cap"], bool)
+    assert start[0]["questions"] == "q.jsonl"

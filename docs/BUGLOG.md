@@ -1120,3 +1120,123 @@ the reason was *a member of the set*, and `budget_gone` is a member. The test wa
 weakened by its own generality. It now pins each cause to its reason. Recorded
 because a mutation check that passes is evidence about the test.
 
+## BUG-043 · L4 streaming · a streamed non-200 never reaches the retry logic — OPEN
+**Found while implementing BUG-042, NOT FIXED.**
+
+`_streamed_call` raises the private `_StreamHTTPError` on any non-200. **Nothing
+catches it** — it is raised at `gateway.py:716` and referenced nowhere else.
+
+Measured (`max_attempts=3`, one 500 on the stream path):
+
+```
+RAISED: _StreamHTTPError | stream failed with 500
+HTTP attempts made: 1 | breaker: closed
+```
+
+Three consequences, all wrong:
+
+1. **No retry.** One 500 ends the request even though two attempts remain.
+2. **The breaker never sees it.** A streamed 5xx does not count as a failure, so the
+   breaker stays `closed` while the stream path fails on every request.
+3. **No `attempt.end` for the failing attempt**, so the attempt is charged and
+   invisible — the same evidence hole as BUG-023.
+
+Since `Pipeline.answer()` now catches `StreamProtocolError` and maps it to
+`upstream_error`, the request at least ends with a terminal once this is fixed; but
+today the exception is a **private class** that the pipeline cannot name.
+
+**Not fixed here** because it is a distinct change to the streamed send path and this
+commit is already a contract change. It is the next item after I.
+
+## BUG-044 · P4 stand-in · `/__stats` raised on every call, since BUG-033
+**Found while wiring the run metadata.** The route read `STATE.tpm_bucket.used`, but
+`RefillBucket` — which replaced the fixed-window `Bucket` in BUG-033 — has never had
+a `.used` attribute. Every `GET /__stats` raised `AttributeError` and returned a 500.
+
+**Why it survived:** nothing tested the route, and nothing read it. It is a
+diagnostic endpoint, so the failure was invisible until something actually needed it.
+The thing that needed it is the Q-06 A/B: a run has to record which branch it ran
+under.
+
+**Two wrong fixes on the way.** Assuming all three buckets share an API was wrong
+twice in a row:
+
+* `remaining(now)` on all three — the day and request buckets are fixed-window
+  `Bucket`s and have no `remaining()`.
+* the buckets are genuinely different classes: **TPM is a `RefillBucket`** (continuous
+  refill, the observed behaviour), **day and rpd are `Bucket`s**. The route now uses
+  each class's own API, and says so in a comment.
+
+**Fixed and verified:** `{"calls": 0, "tpm_remaining": 8000, "day_used": 0,
+"rpd_used": 0, "assumptions": {...}}`.
+
+## BUG-045 · P4 stand-in · the Q-06 switch could not be flipped
+**`standin.refund_unused_cap` was read by nothing.**
+
+`StandIn` has the field and the branch that refunds; `build_state()` — the only
+constructor — never passed the value. So the config key changed nothing: **both arms
+of the A/B that settles Q-06 would have been the same arm**, and the two tables would
+have been identical while appearing to compare two hypotheses. That is worse than an
+unimplemented switch, because the result looks like a finding.
+
+Same defect class as items D, E and F: configuration that reads as a working feature.
+
+**Fixed.** `build_state()` passes `bool(CFG.get("standin.refund_unused_cap", False))`,
+and the stand-in reports the value it is running under in `/__stats.assumptions`.
+
+**Verified over real HTTP** (not just the dataclass):
+
+| `refund_unused_cap` | remaining after call 1 | remaining after call 2 |
+|---|---|---|
+| `false` | 7896 | 7819 |
+| `true` | 7936 | 7899 |
+
+The 40-token difference is the completion refund, because the stand-in reserves the
+cap but generates fewer tokens.
+
+## BUG-046 · docs · the Q-06 label claimed an observation that does not exist
+**The label, not the code.** `docs/STANDIN.md` called `refund_unused_cap`'s default
+"**OBSERVED**-consistent, never isolated" and justified it with *"the observed deficit
+carried the full cap even when only 41 of 80 tokens were generated"*.
+
+**That reasoning is about the wrong moment.** The deficit carrying the full cap is the
+**admission-time** reading: it shows the cap is *reserved* up front, which the
+observations do support. It says nothing about whether unused cap is *refunded at
+completion*, which is the question Q-06 asks. The label made an assumption look like a
+finding.
+
+**Corrected** to `ASSUMPTION, OPEN (Q-06) until the supervisor's A/B curl result`, and
+the misleading sentence is gone.
+
+**What the observations actually say about refund is weaker than the old label.**
+Assuming call 2 reserved the same 156 tokens as call 1:
+
+| model | implied reserve for call 2 | miss vs 156 |
+|---|---|---|
+| no refund | 127.3 | ~29 tokens |
+| refund | 166.3 | ~10 tokens |
+
+The 1→2 interval fits refund *slightly* better — and refund is still ~10 tokens out,
+in the direction of *more* than was reserved. **One interval, n=2, one model, one
+prompt shape: INCONCLUSIVE.** The 2→3 interval provides no independent check because
+call 3's reservation is not in the record either.
+
+**The same overclaim was in the test docstrings**, where it would have been read by
+whoever maintains the fixture. `test_unused_cap_is_not_refunded_by_default` is renamed
+to `test_unused_cap_default_is_an_assumption_not_an_observation`, and its docstring now
+says the test guards the *label*, not the physics — it would pass under either
+default.
+
+**Two claims were also being reported as one.** "`reset-tokens` is exact against the
+transcribed deficit" and "calls 2–3 reproduce within 1 % of the *rounded* gaps" are
+different strengths of result. The second is a tolerance check on inputs recorded to
+2 dp, and is the one that would pass if the rate were slightly wrong and the tolerance
+slightly generous. They are now listed separately.
+
+**Provenance corrected.** The source is the probe's own records —
+`runs/probe_20261111T062707Z/single.jsonl`, `runs/probe_20261111T064821Z` — not output
+relayed through `curl`. Those files are not in the tree yet; the supervisor commits
+`calibration/probe/`. Until then the test retypes the values, and
+`test_when_the_probe_records_land_the_values_must_be_read_from_them` **fails as soon as
+any probe jsonl appears**, so the retyped copy cannot quietly outlive the files it was
+transcribed from.

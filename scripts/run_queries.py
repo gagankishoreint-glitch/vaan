@@ -46,6 +46,13 @@ async def main_async(a) -> int:
     questions = [json.loads(l) for l in
                  open(a.questions, encoding="utf-8") if l.strip()][: a.limit]
     r = Retriever.from_jsonl(a.chunks)
+    # Tie every number in this run to the assumption it used. See EventLog.start_run.
+    log.start_run(
+        questions=str(a.questions), base_url=a.base_url, limit=a.limit,
+        standin_refund_unused_cap=cfg.get("standin.refund_unused_cap", None),
+        standin_per_minute_limit=cfg.get("standin.per_minute_limit", None),
+        retry_policy=cfg.get("gateway.retry_policy", None),
+    )
     # .env is loaded so a key placed there works for every entry point, not just
     # the probe. Default "standin" keeps the local path working with no key at all.
     load_env()
