@@ -212,3 +212,48 @@ ORDER, and the order is now pinned).
 **Run:** `runs/standin/quality_smoke/` — 6 synthetic rows covering every class,
 graded in the agent sandbox. **UNCALIBRATED and synthetic**: it exercises the
 classifier, it is not a quality measurement of the system.
+
+---
+
+## 5d · one-command stand-in pass (`scripts/run_all_standin.sh`)
+
+    ./scripts/run_all_standin.sh              # everything that can run here
+    ./scripts/run_all_standin.sh --strict     # non-zero if anything was SKIPPED
+    ./scripts/run_all_standin.sh --only breaker,load
+
+**Result of an actual run (agent sandbox, 0 Groq calls):**
+
+| scenario | status | evidence |
+|---|---|---|
+| `smoke_p0` | PASS | H1 contract end to end |
+| `breaker_cycle` | PASS | opened on the 3rd 500, one probe in half-open |
+| `load_steady` | PASS | 10 arrivals |
+| `load_burst` | PASS | 30 arrivals |
+| `load_overload` | PASS | 240 arrivals |
+| `stream_http_error` | PASS | **2 `attempt.end`, both `server_error`/500** |
+| `pipeline_overload` | **SKIPPED** | no corpus |
+| `run_queries` | **SKIPPED** | no corpus |
+| `quality` | **SKIPPED** | depends on `run_queries` |
+
+`pass 6 · fail 0 · skipped 3`, and `--strict` exits **3** because nothing skipped can
+be called green.
+
+**Skipped is a third state, not a silent pass.** `data/papers/*.pdf` is git-ignored
+(D-005), so the corpus is absent in a bare checkout and the pipeline scenarios cannot
+run. The script says so at the end, every time, and `--strict` makes it a build
+failure. A harness that quietly drops three scenarios produces a green line for a
+system that was never exercised.
+
+**A false green this script produced and then caught.**
+The first version of the `stream_http_error` scenario ran against the *healthy*
+stand-in, got `outcomes: ["ok"]`, and reported **PASS** — it had exercised nothing.
+It now starts its own stand-in with `error_rate=1.0` and the probe **fails** unless at
+least one `attempt.end` carries `server_error`. Verified both ways: against a healthy
+stand-in the probe exits **1** with `FAIL: no server_error attempt.end`.
+
+**Two defects found while writing it:** the probe could not import `relay` when run as
+a script (`sys.path`), and the harness would otherwise have reported that packaging
+mistake as a genuine FAIL.
+
+**Not covered, and why:** nothing here validates provider behaviour. Every number is a
+property of the stand-in (D-004 applies: `runs/` is not in git until packaging).
