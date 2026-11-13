@@ -178,3 +178,37 @@ latency fit from probe data.
 
 **Not measurable here:** every corpus-dependent number. The PDFs are absent, so no
 retrieval or answer-quality figure in this repository was produced by this sandbox.
+
+---
+
+## 5b · quality grading (`scripts/run_quality.py`)
+
+PRD §11 asks for six outcomes per question. **Four are decidable from the run
+artifact; two are not**, and the script refuses to guess the difference.
+
+| PRD class | decided here? | how |
+|---|---|---|
+| correctly abstained | **yes** | `no_evidence`/`passages_only` on an `unanswerable` question, with a non-infrastructure reason |
+| wrongly abstained | **yes** | abstained on an answerable question |
+| wrong | **yes** | answered, but cited no gold chunk (H2: every claim cites the paper) |
+| correct | **NO** | needs a reader; a gold citation is necessary, not sufficient |
+| partly | **NO** | needs a reader |
+| citation valid y/n | **partly** | `gold_hit` = "cited ≥1 gold chunk", **not** "every citation resolves" — the latter needs the chunk index |
+
+Two classes exist because the naive version of each would have inflated the table:
+
+* **`abandoned`** is not an abstention. Counting it as one improves every quality
+  metric by simply having impatient users.
+* **`infra_abstention`** is not a correct abstention. A `passages_only` on an
+  unanswerable question *reads* as correct, but with `reason=upstream_error` we
+  abstained because the provider failed — the papers' silence was never established.
+  Found by running the script on a synthetic row, not by reasoning about it.
+
+**Mutation checks:** scoring `correct` from a gold citation fails 3 tests; adding
+`abandoned` to the abstain set fails the strengthened order test (it passed before
+that test existed, because `classify` returns on `abandoned` first — the guard is the
+ORDER, and the order is now pinned).
+
+**Run:** `runs/standin/quality_smoke/` — 6 synthetic rows covering every class,
+graded in the agent sandbox. **UNCALIBRATED and synthetic**: it exercises the
+classifier, it is not a quality measurement of the system.
